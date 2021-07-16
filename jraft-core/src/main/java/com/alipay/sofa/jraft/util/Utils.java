@@ -20,8 +20,11 @@ import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
+import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -130,7 +133,7 @@ public final class Utils {
         if (!GROUP_ID_PATTER.matcher(groupId).matches()) {
             throw new IllegalArgumentException(
                 "Invalid group id, it should be started with character 'a'-'z' or 'A'-'Z',"
-                        + "and followed with numbers, english alphabet, '-' or '_'. ");
+                        + " and followed with numbers, english alphabet, '-' or '_'. ");
         }
     }
 
@@ -336,7 +339,7 @@ public final class Utils {
             // If it falls here that can mean many things. Either that the atomic move is not supported,
             // or something wrong happened. Anyway, let's try to be over-diagnosing
             if (e instanceof AtomicMoveNotSupportedException) {
-                LOG.warn("Atomic move not supported. falling back to non-atomic move, error: {}.", e.getMessage());
+                LOG.warn("Atomic move not supported, falling back to non-atomic move, error: {}.", e.getMessage());
             } else {
                 LOG.warn("Unable to move atomically, falling back to non-atomic move, error: {}.", e.getMessage());
             }
@@ -377,7 +380,7 @@ public final class Utils {
      */
     public static void fsync(final File file) throws IOException {
         final boolean isDir = file.isDirectory();
-        // can't fsync on windowns.
+        // can't fsync on windows.
         if (isDir && Platform.isWindows()) {
             LOG.warn("Unable to fsync directory {} on windows.", file);
             return;
@@ -385,6 +388,41 @@ public final class Utils {
         try (final FileChannel fc = FileChannel.open(file.toPath(), isDir ? StandardOpenOption.READ
             : StandardOpenOption.WRITE)) {
             fc.force(true);
+        }
+    }
+
+    /**
+     * Unmap mappedByteBuffer
+     * See https://stackoverflow.com/questions/2972986/how-to-unmap-a-file-from-memory-mapped-using-filechannel-in-java
+     */
+    public static void unmap(final MappedByteBuffer cb) {
+        // JavaSpecVer: 1.6, 1.7, 1.8, 9, 10
+        final boolean isOldJDK = System.getProperty("java.specification.version", "99").startsWith("1.");
+        try {
+            if (isOldJDK) {
+                final Method cleaner = cb.getClass().getMethod("cleaner");
+                cleaner.setAccessible(true);
+                final Method clean = Class.forName("sun.misc.Cleaner").getMethod("clean");
+                clean.setAccessible(true);
+                clean.invoke(cleaner.invoke(cb));
+            } else {
+                Class unsafeClass;
+                try {
+                    unsafeClass = Class.forName("sun.misc.Unsafe");
+                } catch (final Exception ex) {
+                    // jdk.internal.misc.Unsafe doesn't yet have an invokeCleaner() method,
+                    // but that method should be added if sun.misc.Unsafe is removed.
+                    unsafeClass = Class.forName("jdk.internal.misc.Unsafe");
+                }
+                final Method clean = unsafeClass.getMethod("invokeCleaner", ByteBuffer.class);
+                clean.setAccessible(true);
+                final Field theUnsafeField = unsafeClass.getDeclaredField("theUnsafe");
+                theUnsafeField.setAccessible(true);
+                final Object theUnsafe = theUnsafeField.get(null);
+                clean.invoke(theUnsafe, cb);
+            }
+        } catch (final Exception ex) {
+            LOG.error("Fail to un-mapped segment file.", ex);
         }
     }
 

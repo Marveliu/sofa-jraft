@@ -16,16 +16,15 @@
  */
 package com.alipay.sofa.jraft.entity;
 
-import java.nio.ByteBuffer;
-import java.util.Collection;
-import java.util.List;
-
 import com.alipay.sofa.jraft.entity.codec.LogEntryDecoder;
 import com.alipay.sofa.jraft.entity.codec.LogEntryEncoder;
 import com.alipay.sofa.jraft.entity.codec.v1.LogEntryV1CodecFactory;
 import com.alipay.sofa.jraft.entity.codec.v1.V1Decoder;
 import com.alipay.sofa.jraft.entity.codec.v1.V1Encoder;
 import com.alipay.sofa.jraft.util.CrcUtil;
+
+import java.nio.ByteBuffer;
+import java.util.List;
 
 /**
  * A replica log entry.
@@ -36,24 +35,26 @@ import com.alipay.sofa.jraft.util.CrcUtil;
  */
 public class LogEntry implements Checksum {
 
+    public static final ByteBuffer EMPTY_DATA = ByteBuffer.wrap(new byte[0]);
+
     /** entry type */
-    private EnumOutter.EntryType type;
+    private EnumOutter.EntryType   type;
     /** log id with index/term */
-    private LogId                id = new LogId(0, 0);
+    private LogId                  id         = new LogId(0, 0);
     /** log entry current peers */
-    private List<PeerId>         peers;
+    private List<PeerId>           peers;
     /** log entry old peers */
-    private List<PeerId>         oldPeers;
+    private List<PeerId>           oldPeers;
     /** log entry current learners */
-    private List<PeerId>         learners;
+    private List<PeerId>           learners;
     /** log entry old learners */
-    private List<PeerId>         oldLearners;
+    private List<PeerId>           oldLearners;
     /** entry data */
-    private ByteBuffer           data;
+    private ByteBuffer             data       = EMPTY_DATA;
     /** checksum for log entry*/
-    private long                 checksum;
+    private long                   checksum;
     /** true when the log has checksum **/
-    private boolean              hasChecksum;
+    private boolean                hasChecksum;
 
     public List<PeerId> getLearners() {
         return this.learners;
@@ -88,21 +89,12 @@ public class LogEntry implements Checksum {
     @Override
     public long checksum() {
         long c = checksum(this.type.getNumber(), this.id.checksum());
-        c = checksumPeers(this.peers, c);
-        c = checksumPeers(this.oldPeers, c);
-        c = checksumPeers(this.learners, c);
-        c = checksumPeers(this.oldLearners, c);
+        c = checksum(this.peers, c);
+        c = checksum(this.oldPeers, c);
+        c = checksum(this.learners, c);
+        c = checksum(this.oldLearners, c);
         if (this.data != null && this.data.hasRemaining()) {
             c = checksum(c, CrcUtil.crc64(this.data));
-        }
-        return c;
-    }
-
-    private long checksumPeers(final Collection<PeerId> peers, long c) {
-        if (peers != null && !peers.isEmpty()) {
-            for (final PeerId peer : peers) {
-                c = checksum(c, peer.checksum());
-            }
         }
         return c;
     }

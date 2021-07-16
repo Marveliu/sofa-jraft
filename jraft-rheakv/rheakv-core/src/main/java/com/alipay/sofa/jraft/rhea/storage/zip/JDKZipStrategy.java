@@ -14,14 +14,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.alipay.sofa.jraft.rhea.cmd.pd;
+package com.alipay.sofa.jraft.rhea.storage.zip;
 
-import com.alipay.sofa.jraft.rhea.metadata.Cluster;
+import com.alipay.sofa.jraft.rhea.util.ZipUtil;
+import java.util.zip.Checksum;
 
 /**
- * @author jiachun.fjc
+ * @author hzh
  */
-public class GetClusterInfoResponse extends BaseResponse<Cluster> {
+public class JDKZipStrategy implements ZipStrategy {
 
-    private static final long serialVersionUID = 8811355826978037463L;
+    @Override
+    public void compress(final String rootDir, final String sourceDir, final String outputZipFile,
+                         final Checksum checksum) throws Throwable {
+        ZipUtil.compress(rootDir, sourceDir, outputZipFile, checksum);
+    }
+
+    @Override
+    public void deCompress(final String sourceZipFile, final String outputDir, final Checksum checksum)
+                                                                                                       throws Throwable {
+        ZipUtil.decompress(sourceZipFile, outputDir, checksum);
+    }
+
 }

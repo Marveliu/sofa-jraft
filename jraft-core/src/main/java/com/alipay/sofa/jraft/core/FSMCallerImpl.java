@@ -339,7 +339,7 @@ public class FSMCallerImpl implements FSMCaller {
     @Override
     public boolean onError(final RaftException error) {
         if (!this.error.getStatus().isOk()) {
-            LOG.warn("FSMCaller already in error status, ignore new error: {}", error);
+            LOG.warn("FSMCaller already in error status, ignore new error.", error);
             return false;
         }
         final OnErrorClosure c = new OnErrorClosure(error);
@@ -374,6 +374,7 @@ public class FSMCallerImpl implements FSMCaller {
             if (task.committedIndex > maxCommittedIndex) {
                 maxCommittedIndex = task.committedIndex;
             }
+            task.reset();
         } else {
             if (maxCommittedIndex >= 0) {
                 this.currTask = TaskType.COMMITTED;
@@ -432,6 +433,7 @@ public class FSMCallerImpl implements FSMCaller {
                 }
             } finally {
                 this.nodeMetrics.recordLatency(task.type.metricName(), Utils.monotonicMs() - startMs);
+                task.reset();
             }
         }
         try {
