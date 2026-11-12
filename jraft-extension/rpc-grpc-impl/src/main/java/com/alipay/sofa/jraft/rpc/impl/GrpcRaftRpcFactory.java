@@ -16,13 +16,15 @@
  */
 package com.alipay.sofa.jraft.rpc.impl;
 
+import java.net.InetSocketAddress;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import io.grpc.Server;
-import io.grpc.ServerBuilder;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.util.MutableHandlerRegistry;
 
+import com.alipay.remoting.util.StringUtils;
 import com.alipay.sofa.jraft.rpc.RaftRpcFactory;
 import com.alipay.sofa.jraft.rpc.RpcClient;
 import com.alipay.sofa.jraft.rpc.RpcResponseFactory;
@@ -41,9 +43,14 @@ import com.google.protobuf.Message;
 public class GrpcRaftRpcFactory implements RaftRpcFactory {
 
     static final String             FIXED_METHOD_NAME              = "_call";
-    static final int                RPC_SERVER_PROCESSOR_POOL_SIZE = SystemPropertyUtil.getInt(
-                                                                       "grpc.default_rpc_server_processor_pool_size",
-                                                                       100);
+    static final int                RPC_SERVER_PROCESSOR_POOL_SIZE = SystemPropertyUtil
+                                                                       .getInt(
+                                                                           "jraft.grpc.default_rpc_server_processor_pool_size",
+                                                                           100);
+
+    static final int                RPC_MAX_INBOUND_MESSAGE_SIZE   = SystemPropertyUtil.getInt(
+                                                                       "jraft.grpc.max_inbound_message_size.bytes",
+                                                                       4 * 1024 * 1024);
 
     static final RpcResponseFactory RESPONSE_FACTORY               = new GrpcResponseFactory();
 
@@ -83,9 +90,12 @@ public class GrpcRaftRpcFactory implements RaftRpcFactory {
         final int port = Requires.requireNonNull(endpoint, "endpoint").getPort();
         Requires.requireTrue(port > 0 && port < 0xFFFF, "port out of range:" + port);
         final MutableHandlerRegistry handlerRegistry = new MutableHandlerRegistry();
-        final Server server = ServerBuilder.forPort(port) //
+        InetSocketAddress address = StringUtils.isNotBlank(endpoint.getIp()) ? new InetSocketAddress(endpoint.getIp(),
+            port) : new InetSocketAddress(port);
+        final Server server = NettyServerBuilder.forAddress(address) //
             .fallbackHandlerRegistry(handlerRegistry) //
             .directExecutor() //
+            .maxInboundMessageSize(RPC_MAX_INBOUND_MESSAGE_SIZE) //
             .build();
         final RpcServer rpcServer = new GrpcServer(server, handlerRegistry, this.parserClasses, getMarshallerRegistry());
         if (helper != null) {

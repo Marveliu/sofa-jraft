@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.StampedLock;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -86,11 +86,7 @@ public class RouteTable implements Describer {
     private GroupConf getOrCreateGroupConf(final String groupId) {
         GroupConf gc = this.groupConfTable.get(groupId);
         if (gc == null) {
-            gc = new GroupConf();
-            final GroupConf old = this.groupConfTable.putIfAbsent(groupId, gc);
-            if (old != null) {
-                gc = old;
-            }
+            return this.groupConfTable.computeIfAbsent(groupId, key -> new GroupConf());
         }
         return gc;
     }
@@ -236,11 +232,13 @@ public class RouteTable implements Describer {
                 "Group %s is not registered in RouteTable, forgot to call updateConfiguration?", groupId);
         }
         final Status st = Status.OK();
-        final CliRequests.GetLeaderRequest.Builder rb = CliRequests.GetLeaderRequest.newBuilder();
-        rb.setGroupId(groupId);
-        final CliRequests.GetLeaderRequest request = rb.build();
+
         TimeoutException timeoutException = null;
         for (final PeerId peer : conf) {
+            final CliRequests.GetLeaderRequest.Builder rb = CliRequests.GetLeaderRequest.newBuilder();
+            rb.setGroupId(groupId);
+            rb.setPeerId(peer.toString());
+            final CliRequests.GetLeaderRequest request = rb.build();
             if (!cliClientService.connect(peer.getEndpoint())) {
                 if (st.isOk()) {
                     st.setError(-1, "Fail to init channel to %s", peer);
@@ -320,6 +318,11 @@ public class RouteTable implements Describer {
                     final PeerId newPeer = new PeerId();
                     newPeer.parse(peerIdStr);
                     newConf.addPeer(newPeer);
+                }
+                for (final String learnerIdStr : resp.getLearnersList()) {
+                    final PeerId newLearner = new PeerId();
+                    newLearner.parse(learnerIdStr);
+                    newConf.addLearner(newLearner);
                 }
                 if (!conf.equals(newConf)) {
                     LOG.info("Configuration of replication group {} changed from {} to {}", groupId, conf, newConf);

@@ -38,11 +38,11 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.regex.Pattern;
 
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.rocksdb.RocksDBException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.alipay.sofa.common.profile.StringUtil;
 import com.alipay.sofa.jraft.option.RaftOptions;
 import com.alipay.sofa.jraft.storage.impl.RocksDBLogStorage;
 import com.alipay.sofa.jraft.storage.log.CheckpointFile.Checkpoint;
@@ -561,7 +561,7 @@ public class RocksDBSegmentLogStorage extends RocksDBLogStorage {
             final boolean isLastFile = i == this.segments.size() - 1;
             SegmentFile segmentFile = this.segments.get(i);
             int pos = segmentFile.getSize();
-            if (StringUtil.equalsIgnoreCase(checkpointSegFile, segmentFile.getFilename())) {
+            if (StringUtils.equalsIgnoreCase(checkpointSegFile, segmentFile.getFilename())) {
                 needRecover = true;
                 assert (checkpoint != null);
                 pos = checkpoint.committedPos;
@@ -649,13 +649,7 @@ public class RocksDBSegmentLogStorage extends RocksDBLogStorage {
             doAllocateSegment0();
         }
         // Start the thread.
-        this.segmentAllocator = new Thread() {
-            @Override
-            public void run() {
-                doAllocateSegment();
-            }
-
-        };
+        this.segmentAllocator = new Thread(this::doAllocateSegment);
         this.segmentAllocator.setDaemon(true);
         this.segmentAllocator.setName("SegmentAllocator");
         this.segmentAllocator.start();
@@ -665,7 +659,7 @@ public class RocksDBSegmentLogStorage extends RocksDBLogStorage {
         LOG.info("SegmentAllocator is started.");
         while (!Thread.currentThread().isInterrupted()) {
             doAllocateSegmentInLock();
-            doSwappOutSegments();
+            doSwapOutSegments(false);
         }
         LOG.info("SegmentAllocator exit.");
     }
@@ -689,8 +683,12 @@ public class RocksDBSegmentLogStorage extends RocksDBLogStorage {
         }
     }
 
-    private void doSwappOutSegments() {
-        this.readLock.lock();
+    private void doSwapOutSegments(final boolean force) {
+        if (force) {
+            this.readLock.lock();
+        } else if (!this.readLock.tryLock()) {
+            return;
+        }
         try {
             if (this.segments.size() <= this.keepInMemorySegmentCount) {
                 return;

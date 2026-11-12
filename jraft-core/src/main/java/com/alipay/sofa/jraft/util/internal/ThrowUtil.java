@@ -23,18 +23,11 @@ package com.alipay.sofa.jraft.util.internal;
  */
 public final class ThrowUtil {
 
-    private static final ReferenceFieldUpdater<Throwable, Throwable> causeUpdater = Updaters.newReferenceFieldUpdater(
-                                                                                      Throwable.class, "cause");
-
     /**
      * Raises an exception bypassing compiler checks for checked exceptions.
      */
     public static void throwException(final Throwable t) {
-        if (UnsafeUtil.hasUnsafe()) {
-            UnsafeUtil.throwException(t);
-        } else {
-            ThrowUtil.throwException0(t);
-        }
+        ThrowUtil.throwException0(t);
     }
 
     /**
@@ -53,17 +46,12 @@ public final class ThrowUtil {
         throw (E) t;
     }
 
-    public static <T extends Throwable> T cutCause(final T cause) {
+    public static Throwable getRootCause(final Throwable cause) {
         Throwable rootCause = cause;
         while (rootCause.getCause() != null) {
             rootCause = rootCause.getCause();
         }
-
-        if (rootCause != cause) {
-            cause.setStackTrace(rootCause.getStackTrace());
-            causeUpdater.set(cause, cause);
-        }
-        return cause;
+        return rootCause;
     }
 
     private ThrowUtil() {

@@ -20,7 +20,6 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 import com.alipay.sofa.jraft.Closure;
-import com.alipay.sofa.jraft.StateMachine;
 import com.alipay.sofa.jraft.Status;
 import com.alipay.sofa.jraft.entity.EnumOutter;
 import com.alipay.sofa.jraft.entity.LogEntry;
@@ -29,6 +28,7 @@ import com.alipay.sofa.jraft.error.RaftError;
 import com.alipay.sofa.jraft.error.RaftException;
 import com.alipay.sofa.jraft.storage.LogManager;
 import com.alipay.sofa.jraft.util.Requires;
+import com.alipay.sofa.jraft.util.ThreadPoolsFactory;
 import com.alipay.sofa.jraft.util.Utils;
 
 /**
@@ -40,21 +40,24 @@ import com.alipay.sofa.jraft.util.Utils;
  */
 public class IteratorImpl {
 
-    private final StateMachine  fsm;
+    private final FSMCallerImpl fsmCaller;
     private final LogManager    logManager;
     private final List<Closure> closures;
     private final long          firstClosureIndex;
     private long                currentIndex;
     private final long          committedIndex;
-    private LogEntry            currEntry = new LogEntry(); // blank entry
+    private long                fsmCommittedIndex;                // fsm commit index
+    private LogEntry            currEntry        = new LogEntry(); // blank entry
     private final AtomicLong    applyingIndex;
     private RaftException       error;
+    private boolean             autoCommitPerLog = false;         // Default enabled
 
-    public IteratorImpl(final StateMachine fsm, final LogManager logManager, final List<Closure> closures,
+    public IteratorImpl(final FSMCallerImpl fsmCaller, final LogManager logManager, final List<Closure> closures,
                         final long firstClosureIndex, final long lastAppliedIndex, final long committedIndex,
                         final AtomicLong applyingIndex) {
         super();
-        this.fsm = fsm;
+        this.fsmCaller = fsmCaller;
+        this.fsmCommittedIndex = -1L;
         this.logManager = logManager;
         this.closures = closures;
         this.firstClosureIndex = firstClosureIndex;
@@ -66,10 +69,10 @@ public class IteratorImpl {
 
     @Override
     public String toString() {
-        return "IteratorImpl [fsm=" + this.fsm + ", logManager=" + this.logManager + ", closures=" + this.closures
-               + ", firstClosureIndex=" + this.firstClosureIndex + ", currentIndex=" + this.currentIndex
-               + ", committedIndex=" + this.committedIndex + ", currEntry=" + this.currEntry + ", applyingIndex="
-               + this.applyingIndex + ", error=" + this.error + "]";
+        return "IteratorImpl [fsmCaller=" + fsmCaller + ", logManager=" + logManager + ", closures=" + closures
+               + ", firstClosureIndex=" + firstClosureIndex + ", currentIndex=" + currentIndex + ", committedIndex="
+               + committedIndex + ", fsmCommittedIndex=" + fsmCommittedIndex + ", currEntry=" + currEntry
+               + ", applyingIndex=" + applyingIndex + ", error=" + error + "]";
     }
 
     public LogEntry entry() {
@@ -86,6 +89,14 @@ public class IteratorImpl {
 
     public boolean hasError() {
         return this.error != null;
+    }
+
+    public void setAutoCommitPerLog(boolean status) {
+        this.autoCommitPerLog = status;
+    }
+
+    public boolean getAutoCommitPerLog() {
+        return this.autoCommitPerLog;
     }
 
     /**
@@ -132,9 +143,41 @@ public class IteratorImpl {
                 Requires.requireNonNull(this.error, "error");
                 Requires.requireNonNull(this.error.getStatus(), "error.status");
                 final Status status = this.error.getStatus();
-                Utils.runClosureInThread(done, status);
+                ThreadPoolsFactory.runClosureInThread(this.fsmCaller.getNode().getGroupId(), done, status);
             }
         }
+    }
+
+    public boolean commit() {
+        if (isGood() && this.currEntry != null && this.currEntry.getType() == EnumOutter.EntryType.ENTRY_TYPE_DATA) {
+            fsmCommittedIndex = this.currentIndex;
+            //Commit last applied.
+            this.fsmCaller.setLastApplied(currentIndex, this.currEntry.getId().getTerm());
+            return true;
+        }
+        return false;
+    }
+
+    public void commitAndSnapshotSync(Closure done) {
+        if (commit()) {
+            this.fsmCaller.getNode().snapshotSync(done);
+        } else {
+            Utils.runClosure(done, new Status(RaftError.ECANCELED, "Fail to commit, logIndex=" + currentIndex
+                                                                   + ", committedIndex=" + committedIndex));
+        }
+    }
+
+    /**
+     * Set error without rolling back the index. Used when the state machine
+     * throws an uncaught exception — we want to halt the node (ERROR state)
+     * without assuming any rollback policy.
+     */
+    public void setError(final Status st) {
+        this.currEntry = null;
+        getOrCreateError().setType(EnumOutter.ErrorType.ERROR_TYPE_STATE_MACHINE);
+        getOrCreateError().getStatus().setError(RaftError.ESTATEMACHINE,
+            "StateMachine meet critical error when applying one or more tasks since index=%d, %s", this.currentIndex,
+            st != null ? st.toString() : "none");
     }
 
     public void setErrorAndRollback(final long ntail, final Status st) {
@@ -143,6 +186,10 @@ public class IteratorImpl {
             this.currentIndex -= ntail;
         } else {
             this.currentIndex -= ntail - 1;
+        }
+        if (fsmCommittedIndex >= 0) {
+            // can't roll back before fsmCommittedIndex.
+            this.currentIndex = Math.max(this.currentIndex, fsmCommittedIndex + 1);
         }
         this.currEntry = null;
         getOrCreateError().setType(EnumOutter.ErrorType.ERROR_TYPE_STATE_MACHINE);

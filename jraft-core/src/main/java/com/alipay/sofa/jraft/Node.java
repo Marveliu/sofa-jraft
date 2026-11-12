@@ -22,6 +22,7 @@ import com.alipay.sofa.jraft.closure.ReadIndexClosure;
 import com.alipay.sofa.jraft.conf.Configuration;
 import com.alipay.sofa.jraft.core.NodeMetrics;
 import com.alipay.sofa.jraft.core.Replicator;
+import com.alipay.sofa.jraft.core.State;
 import com.alipay.sofa.jraft.entity.NodeId;
 import com.alipay.sofa.jraft.entity.PeerId;
 import com.alipay.sofa.jraft.entity.Task;
@@ -30,6 +31,7 @@ import com.alipay.sofa.jraft.error.LogIndexOutOfBoundsException;
 import com.alipay.sofa.jraft.error.LogNotFoundException;
 import com.alipay.sofa.jraft.option.NodeOptions;
 import com.alipay.sofa.jraft.option.RaftOptions;
+import com.alipay.sofa.jraft.option.ReadOnlyOption;
 import com.alipay.sofa.jraft.util.Describer;
 
 /**
@@ -118,9 +120,10 @@ public interface Node extends Lifecycle<NodeOptions>, Describer {
      * [Thread-safe and wait-free]
      *
      * Starts a linearizable read-only query request with request context(optional,
-     * such as request id etc.) and closure.  The closure will be called when the
-     * request is completed, and user can read data from state machine if the result
-     * status is OK.
+     * such as request id etc.) and closure.
+     * The default value of ReadOnlyOption is {@link ReadOnlyOption#ReadOnlySafe}.
+     * The closure will be called when the request is completed, and user can read
+     * data from state machine if the result status is OK.
      *
      * @param requestContext the context of request
      * @param done           callback
@@ -128,6 +131,19 @@ public interface Node extends Lifecycle<NodeOptions>, Describer {
      * @since 0.0.3
      */
     void readIndex(final byte[] requestContext, final ReadIndexClosure done);
+
+    /**
+     * [Thread-safe and wait-free]
+     *
+     * Specify the ReadOnlyOption to execute a linearizable read-only query request.
+     *
+     * @param readOnlyOptions how the read only request is processed
+     * @param requestContext the context of request
+     * @param done           callback
+     *
+     * @since 1.3.13
+     */
+    void readIndex(final ReadOnlyOption readOnlyOptions, final byte[] requestContext, final ReadIndexClosure done);
 
     /**
      * List peers of this raft group, only leader returns.
@@ -195,7 +211,7 @@ public interface Node extends Lifecycle<NodeOptions>, Describer {
     void removePeer(final PeerId peer, final Closure done);
 
     /**
-     * Change the configuration of the raft group to |newPeers| , done.un()
+     * Change the configuration of the raft group to |newPeers| , done.run()
      * would be invoked after this operation finishes, describing the detailed result.
      *
      * @param newPeers new peers to change
@@ -210,7 +226,7 @@ public interface Node extends Lifecycle<NodeOptions>, Describer {
      * dead and you'd like to revive the service in the consideration of
      * availability.
      * Notice that neither consistency nor consensus are guaranteed in this
-     * case, BE CAREFULE when dealing with this method.
+     * case, BE CAREFUL when dealing with this method.
      *
      * @param newPeers new peers
      */
@@ -253,6 +269,17 @@ public interface Node extends Lifecycle<NodeOptions>, Describer {
      * @param done callback
      */
     void snapshot(final Closure done);
+
+    /**
+     * Start to snapshot StateMachine immediately with the latest log applied to state machine.
+     * You MUST call this method in {@link StateMachine} callback methods to trigger a snapshot synchronously, otherwise throws {@link IllegalStateException}.
+     * And done.run() would be invoked when the snapshot finishes, describing the detailed result.
+     *
+     * @param done snapshot callback
+     * @since 1.3.11
+     * @throws IllegalStateException the method is not called in {@link StateMachine} callback methods.
+     */
+    void snapshotSync(final Closure done);
 
     /**
      * Reset the election_timeout for the every node.
@@ -324,4 +351,33 @@ public interface Node extends Lifecycle<NodeOptions>, Describer {
      * @since 1.3.0
      */
     int getNodeTargetPriority();
+
+    /**
+     * Get the node's state.
+     *
+     * @return node's state.
+     * @since 1.3.8
+     */
+    State getNodeState();
+
+    /**
+     * Retrieve the last log index in log storage. Note: the last log may not be committed to raft group, and may be truncated in some cases.
+     * @return the last log index
+     * @since 1.3.12
+     */
+    long getLastLogIndex();
+
+    /**
+     * Retrieve the last log index that committed to the raft group.
+     * @return the last committed log index
+     * @since 1.3.12
+     */
+    long getLastCommittedIndex();
+
+    /**
+     * Retrieve the last log index that applied to state machine.
+     * @return the last applied log index
+     * @since 1.3.12
+     */
+    long getLastAppliedLogIndex();
 }

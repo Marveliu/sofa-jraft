@@ -29,11 +29,12 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public class ClosureQueueTest {
-    private ClosureQueueImpl queue;
+    private static final String GROUP_ID = "group001";
+    private ClosureQueueImpl    queue;
 
     @Before
     public void setup() {
-        this.queue = new ClosureQueueImpl();
+        this.queue = new ClosureQueueImpl(GROUP_ID);
     }
 
     @SuppressWarnings("SameParameterValue")

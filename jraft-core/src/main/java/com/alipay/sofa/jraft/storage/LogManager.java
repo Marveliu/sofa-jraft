@@ -21,6 +21,7 @@ import java.util.List;
 import com.alipay.sofa.jraft.Closure;
 import com.alipay.sofa.jraft.Lifecycle;
 import com.alipay.sofa.jraft.Status;
+import com.alipay.sofa.jraft.closure.InternalClosure;
 import com.alipay.sofa.jraft.conf.ConfigurationEntry;
 import com.alipay.sofa.jraft.entity.LogEntry;
 import com.alipay.sofa.jraft.entity.LogId;
@@ -44,7 +45,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions>, Describer {
      *
      * 2018-Apr-04 4:35:29 PM
      */
-    abstract class StableClosure implements Closure {
+    abstract class StableClosure implements InternalClosure {
 
         protected long           firstLogIndex = 0;
         protected List<LogEntry> entries;
@@ -115,6 +116,14 @@ public interface LogManager extends Lifecycle<LogManagerOptions>, Describer {
      *         while waiting
      */
     void join() throws InterruptedException;
+
+    /**
+     * Given specified <tt>requiredCapacity</tt> determines if that amount of space
+     * is available to append these entries. Returns true when available.
+     * @param requiredCapacity
+     * @return Returns true when available.
+     */
+    boolean hasAvailableCapacityToAppendEntries(final int requiredCapacity);
 
     /**
      * Append log entry vector and wait until it's stable (NOT COMMITTED!)
@@ -211,7 +220,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions>, Describer {
     /**
      * Wait until there are more logs since |last_log_index| and |on_new_log|
      * would be called after there are new logs or error occurs, return the waiter id.
-     * 
+     *
      * @param expectedLastLogIndex  expected last index of log
      * @param cb                    callback
      * @param arg                   the waiter pass-in argument

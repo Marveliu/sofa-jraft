@@ -21,7 +21,7 @@ import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 
 import com.alipay.sofa.jraft.conf.Configuration;
 import com.alipay.sofa.jraft.core.NodeImpl;
@@ -61,7 +61,7 @@ public final class JRaftUtils {
      * @return true if bootstrap success
      */
     public static boolean bootstrap(final BootstrapOptions opts) throws InterruptedException {
-        final NodeImpl node = new NodeImpl();
+        final NodeImpl node = new NodeImpl(opts.getGroupId(), null);
         final boolean ret = node.bootstrap(opts);
         node.shutdown();
         node.join();

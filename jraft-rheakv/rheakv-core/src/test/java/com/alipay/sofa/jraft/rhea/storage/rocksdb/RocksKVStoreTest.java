@@ -28,6 +28,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 
+import com.alipay.sofa.jraft.rhea.TestUtil;
+import com.alipay.sofa.jraft.rhea.storage.RocksDBBackupInfo;
 import org.apache.commons.io.FileUtils;
 import org.junit.After;
 import org.junit.Before;
@@ -183,7 +185,7 @@ public class RocksKVStoreTest extends BaseKVStoreTest {
      * Test method: {@link RocksRawKVStore#containsKey(byte[], KVStoreClosure)}
      */
     @Test
-    public void containsKeyTest() {
+    public void containsKeyTest() throws Exception {
         final byte[] key = makeKey("contains_key_test");
         Boolean isContains = new SyncKVStore<Boolean>() {
             @Override
@@ -195,6 +197,19 @@ public class RocksKVStoreTest extends BaseKVStoreTest {
 
         final byte[] value = makeValue("contains_key_test_value");
         this.kvStore.put(key, value, null);
+
+        isContains = new SyncKVStore<Boolean>() {
+            @Override
+            public void execute(RawKVStore kvStore, KVStoreClosure closure) {
+                kvStore.containsKey(key, closure);
+            }
+        }.apply(this.kvStore);
+        assertTrue(isContains);
+
+        final String snapshotPath = TestUtil.mkTempDir();
+        final RocksDBBackupInfo backupInfo = this.kvStore.backupDB(snapshotPath);
+        this.kvStore.restoreBackup(snapshotPath, backupInfo);
+
         isContains = new SyncKVStore<Boolean>() {
             @Override
             public void execute(RawKVStore kvStore, KVStoreClosure closure) {
@@ -439,6 +454,25 @@ public class RocksKVStoreTest extends BaseKVStoreTest {
 
         this.kvStore.compareAndPut(key, value, update, kvStoreClosure);
         assertEquals(kvStoreClosure.getData(), Boolean.FALSE);
+
+        final byte[] testNullKey = makeKey("put_test_null");
+        final byte[] testNullKeyValue = makeKey("put_test_update_null");
+        this.kvStore.compareAndPut(testNullKey, null, testNullKeyValue, kvStoreClosure);
+        byte[] newTestNullValue = new SyncKVStore<byte[]>() {
+            @Override
+            public void execute(RawKVStore kvStore, KVStoreClosure closure) {
+                kvStore.get(testNullKey, closure);
+            }
+        }.apply(this.kvStore);
+        assertArrayEquals(testNullKeyValue, newTestNullValue);
+        this.kvStore.compareAndPut(testNullKey, testNullKeyValue, null, kvStoreClosure);
+        newTestNullValue = new SyncKVStore<byte[]>() {
+            @Override
+            public void execute(RawKVStore kvStore, KVStoreClosure closure) {
+                kvStore.get(testNullKey, closure);
+            }
+        }.apply(this.kvStore);
+        assertArrayEquals(null, newTestNullValue);
     }
 
     /**
@@ -736,7 +770,7 @@ public class RocksKVStoreTest extends BaseKVStoreTest {
         this.kvStore.shutdown();
         FileUtils.deleteDirectory(new File(this.tempPath));
         FileUtils.forceMkdir(new File(this.tempPath));
-        this.kvStore = new RocksRawKVStore();
+        this.kvStore = new RocksRawKVStore("test");
         this.kvStore.init(this.dbOptions);
 
         assertNull(get(makeKey("1")));
@@ -821,7 +855,7 @@ public class RocksKVStoreTest extends BaseKVStoreTest {
         this.kvStore.shutdown();
         FileUtils.deleteDirectory(new File(this.tempPath));
         FileUtils.forceMkdir(new File(this.tempPath));
-        this.kvStore = new RocksRawKVStore();
+        this.kvStore = new RocksRawKVStore("test");
         this.kvStore.init(this.dbOptions);
 
         kvStoreSnapshotFile = KVStoreSnapshotFileFactory.getKVStoreSnapshotFile(this.kvStore);

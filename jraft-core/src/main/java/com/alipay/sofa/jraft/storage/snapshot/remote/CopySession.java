@@ -43,6 +43,7 @@ import com.alipay.sofa.jraft.rpc.RpcRequests.GetFileResponse;
 import com.alipay.sofa.jraft.rpc.RpcResponseClosureAdapter;
 import com.alipay.sofa.jraft.rpc.RpcUtils;
 import com.alipay.sofa.jraft.storage.SnapshotThrottle;
+import com.alipay.sofa.jraft.util.BufferUtils;
 import com.alipay.sofa.jraft.util.ByteBufferCollector;
 import com.alipay.sofa.jraft.util.Endpoint;
 import com.alipay.sofa.jraft.util.OnlyForTest;
@@ -119,6 +120,10 @@ public class CopySession implements Session {
             if (!this.finished) {
                 Utils.closeQuietly(this.outputStream);
             }
+            if (null != this.destBuf) {
+                this.destBuf.recycle();
+                this.destBuf = null;
+            }
         } finally {
             this.lock.unlock();
         }
@@ -194,7 +199,7 @@ public class CopySession implements Session {
             if (this.destBuf != null) {
                 final ByteBuffer buf = this.destBuf.getBuffer();
                 if (buf != null) {
-                    buf.flip();
+                    BufferUtils.flip(buf);
                 }
                 this.destBuf = null;
             }
@@ -247,7 +252,7 @@ public class CopySession implements Session {
                 try {
                     response.getData().writeTo(this.outputStream);
                 } catch (final IOException e) {
-                    LOG.error("Fail to write into file {}", this.destPath);
+                    LOG.error("Fail to write into file {}", this.destPath, e);
                     this.st.setError(RaftError.EIO, RaftError.EIO.name());
                     onFinished();
                     return;

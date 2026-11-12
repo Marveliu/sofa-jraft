@@ -30,7 +30,7 @@ import com.alipay.sofa.jraft.util.Utils;
  * Node options.
  *
  * @author boyan (boyan@alibaba-inc.com)
- *
+ * @author lfyg
  * 2018-Apr-04 2:59:12 PM
  */
 public class NodeOptions extends RpcOptions implements Copiable<NodeOptions> {
@@ -104,6 +104,9 @@ public class NodeOptions extends RpcOptions implements Copiable<NodeOptions> {
     // Describe a specific SnapshotStorage in format ${type}://${parameters}
     private String                          snapshotUri;
 
+    // Snapshot temp directory for writing. Default is null(not present), jraft will use a `temp` dir under #{snapshotUri}
+    private String                          snapshotTempUri;
+
     // If enable, we will filter duplicate files before copy remote snapshot,
     // to avoid useless transmission. Two files in local and remote are duplicate,
     // only if they has the same filename and the same checksum (stored in file meta).
@@ -168,6 +171,19 @@ public class NodeOptions extends RpcOptions implements Copiable<NodeOptions> {
      */
     private JRaftServiceFactory             serviceFactory         = defaultServiceFactory;
 
+    /**
+     * Apply task in blocking or non-blocking mode, ApplyTaskMode.NonBlocking by default.
+     */
+    private ApplyTaskMode                   applyTaskMode          = ApplyTaskMode.NonBlocking;
+
+    public ApplyTaskMode getApplyTaskMode() {
+        return this.applyTaskMode;
+    }
+
+    public void setApplyTaskMode(final ApplyTaskMode applyTaskMode) {
+        this.applyTaskMode = applyTaskMode;
+    }
+
     public JRaftServiceFactory getServiceFactory() {
         return this.serviceFactory;
     }
@@ -214,10 +230,10 @@ public class NodeOptions extends RpcOptions implements Copiable<NodeOptions> {
     }
 
     public boolean isSharedTimerPool() {
-        return sharedTimerPool;
+        return this.sharedTimerPool;
     }
 
-    public void setSharedTimerPool(boolean sharedTimerPool) {
+    public void setSharedTimerPool(final boolean sharedTimerPool) {
         this.sharedTimerPool = sharedTimerPool;
     }
 
@@ -250,18 +266,18 @@ public class NodeOptions extends RpcOptions implements Copiable<NodeOptions> {
     }
 
     public int getElectionPriority() {
-        return electionPriority;
+        return this.electionPriority;
     }
 
-    public void setElectionPriority(int electionPriority) {
+    public void setElectionPriority(final int electionPriority) {
         this.electionPriority = electionPriority;
     }
 
     public int getDecayPriorityGap() {
-        return decayPriorityGap;
+        return this.decayPriorityGap;
     }
 
-    public void setDecayPriorityGap(int decayPriorityGap) {
+    public void setDecayPriorityGap(final int decayPriorityGap) {
         this.decayPriorityGap = decayPriorityGap;
     }
 
@@ -298,10 +314,10 @@ public class NodeOptions extends RpcOptions implements Copiable<NodeOptions> {
     }
 
     public int getSnapshotLogIndexMargin() {
-        return snapshotLogIndexMargin;
+        return this.snapshotLogIndexMargin;
     }
 
-    public void setSnapshotLogIndexMargin(int snapshotLogIndexMargin) {
+    public void setSnapshotLogIndexMargin(final int snapshotLogIndexMargin) {
         this.snapshotLogIndexMargin = snapshotLogIndexMargin;
     }
 
@@ -353,6 +369,14 @@ public class NodeOptions extends RpcOptions implements Copiable<NodeOptions> {
         this.snapshotUri = snapshotUri;
     }
 
+    public String getSnapshotTempUri() {
+        return snapshotTempUri;
+    }
+
+    public void setSnapshotTempUri(String snapshotTempUri) {
+        this.snapshotTempUri = snapshotTempUri;
+    }
+
     public boolean isFilterBeforeCopyRemote() {
         return this.filterBeforeCopyRemote;
     }
@@ -370,34 +394,34 @@ public class NodeOptions extends RpcOptions implements Copiable<NodeOptions> {
     }
 
     public boolean isSharedElectionTimer() {
-        return sharedElectionTimer;
+        return this.sharedElectionTimer;
     }
 
-    public void setSharedElectionTimer(boolean sharedElectionTimer) {
+    public void setSharedElectionTimer(final boolean sharedElectionTimer) {
         this.sharedElectionTimer = sharedElectionTimer;
     }
 
     public boolean isSharedVoteTimer() {
-        return sharedVoteTimer;
+        return this.sharedVoteTimer;
     }
 
-    public void setSharedVoteTimer(boolean sharedVoteTimer) {
+    public void setSharedVoteTimer(final boolean sharedVoteTimer) {
         this.sharedVoteTimer = sharedVoteTimer;
     }
 
     public boolean isSharedStepDownTimer() {
-        return sharedStepDownTimer;
+        return this.sharedStepDownTimer;
     }
 
-    public void setSharedStepDownTimer(boolean sharedStepDownTimer) {
+    public void setSharedStepDownTimer(final boolean sharedStepDownTimer) {
         this.sharedStepDownTimer = sharedStepDownTimer;
     }
 
     public boolean isSharedSnapshotTimer() {
-        return sharedSnapshotTimer;
+        return this.sharedSnapshotTimer;
     }
 
-    public void setSharedSnapshotTimer(boolean sharedSnapshotTimer) {
+    public void setSharedSnapshotTimer(final boolean sharedSnapshotTimer) {
         this.sharedSnapshotTimer = sharedSnapshotTimer;
     }
 
@@ -422,22 +446,32 @@ public class NodeOptions extends RpcOptions implements Copiable<NodeOptions> {
         nodeOptions.setSharedVoteTimer(this.sharedVoteTimer);
         nodeOptions.setSharedStepDownTimer(this.sharedStepDownTimer);
         nodeOptions.setSharedSnapshotTimer(this.sharedSnapshotTimer);
+
+        nodeOptions.setRpcConnectTimeoutMs(super.getRpcConnectTimeoutMs());
+        nodeOptions.setRpcDefaultTimeout(super.getRpcDefaultTimeout());
+        nodeOptions.setRpcInstallSnapshotTimeout(super.getRpcInstallSnapshotTimeout());
+        nodeOptions.setRpcProcessorThreadPoolSize(super.getRpcProcessorThreadPoolSize());
+        nodeOptions.setEnableRpcChecksum(super.isEnableRpcChecksum());
+        nodeOptions.setMetricRegistry(super.getMetricRegistry());
+
         return nodeOptions;
     }
 
     @Override
     public String toString() {
-        return "NodeOptions{" + "electionTimeoutMs=" + electionTimeoutMs + ", electionPriority=" + electionPriority
-               + ", decayPriorityGap=" + decayPriorityGap + ", leaderLeaseTimeRatio=" + leaderLeaseTimeRatio
-               + ", snapshotIntervalSecs=" + snapshotIntervalSecs + ", snapshotLogIndexMargin="
-               + snapshotLogIndexMargin + ", catchupMargin=" + catchupMargin + ", initialConf=" + initialConf
-               + ", fsm=" + fsm + ", logUri='" + logUri + '\'' + ", raftMetaUri='" + raftMetaUri + '\''
-               + ", snapshotUri='" + snapshotUri + '\'' + ", filterBeforeCopyRemote=" + filterBeforeCopyRemote
-               + ", disableCli=" + disableCli + ", sharedTimerPool=" + sharedTimerPool + ", timerPoolSize="
-               + timerPoolSize + ", cliRpcThreadPoolSize=" + cliRpcThreadPoolSize + ", raftRpcThreadPoolSize="
-               + raftRpcThreadPoolSize + ", enableMetrics=" + enableMetrics + ", snapshotThrottle=" + snapshotThrottle
-               + ", sharedElectionTimer=" + sharedElectionTimer + ", sharedVoteTimer=" + sharedVoteTimer
-               + ", sharedStepDownTimer=" + sharedStepDownTimer + ", sharedSnapshotTimer=" + sharedSnapshotTimer
-               + ", serviceFactory=" + serviceFactory + ", raftOptions=" + raftOptions + "} " + super.toString();
+        return "NodeOptions{" + "electionTimeoutMs=" + this.electionTimeoutMs + ", electionPriority="
+               + this.electionPriority + ", decayPriorityGap=" + this.decayPriorityGap + ", leaderLeaseTimeRatio="
+               + this.leaderLeaseTimeRatio + ", snapshotIntervalSecs=" + this.snapshotIntervalSecs
+               + ", snapshotLogIndexMargin=" + this.snapshotLogIndexMargin + ", catchupMargin=" + this.catchupMargin
+               + ", initialConf=" + this.initialConf + ", fsm=" + this.fsm + ", logUri='" + this.logUri + '\''
+               + ", raftMetaUri='" + this.raftMetaUri + '\'' + ", snapshotUri='" + this.snapshotUri + '\''
+               + ", filterBeforeCopyRemote=" + this.filterBeforeCopyRemote + ", disableCli=" + this.disableCli
+               + ", sharedTimerPool=" + this.sharedTimerPool + ", timerPoolSize=" + this.timerPoolSize
+               + ", cliRpcThreadPoolSize=" + this.cliRpcThreadPoolSize + ", raftRpcThreadPoolSize="
+               + this.raftRpcThreadPoolSize + ", enableMetrics=" + this.enableMetrics + ", snapshotThrottle="
+               + this.snapshotThrottle + ", sharedElectionTimer=" + this.sharedElectionTimer + ", sharedVoteTimer="
+               + this.sharedVoteTimer + ", sharedStepDownTimer=" + this.sharedStepDownTimer + ", sharedSnapshotTimer="
+               + this.sharedSnapshotTimer + ", serviceFactory=" + this.serviceFactory + ", applyTaskMode="
+               + this.applyTaskMode + ", raftOptions=" + this.raftOptions + "} " + super.toString();
     }
 }

@@ -16,7 +16,7 @@
  */
 package com.alipay.sofa.jraft;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -121,7 +121,7 @@ public class RaftGroupService {
             throw new IllegalArgumentException("Blank serverId:" + this.serverId);
         }
         if (StringUtils.isBlank(this.groupId)) {
-            throw new IllegalArgumentException("Blank group id" + this.groupId);
+            throw new IllegalArgumentException("Blank group id:" + this.groupId);
         }
         //Adds RPC server to Server.
         NodeManager.getInstance().addAddress(this.serverId.getEndpoint());
@@ -129,7 +129,7 @@ public class RaftGroupService {
         this.node = RaftServiceFactory.createAndInitRaftNode(this.groupId, this.serverId, this.nodeOptions);
         if (startRpcServer) {
             this.rpcServer.init(null);
-        } else {
+        } else if (rpcServer == null || !rpcServer.isStarted()) {
             LOG.warn("RPC server is not started in RaftGroupService.");
         }
         this.started = true;

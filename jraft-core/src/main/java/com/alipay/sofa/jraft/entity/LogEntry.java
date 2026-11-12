@@ -17,7 +17,6 @@
 package com.alipay.sofa.jraft.entity;
 
 import java.nio.ByteBuffer;
-import java.util.Collection;
 import java.util.List;
 
 import com.alipay.sofa.jraft.entity.codec.LogEntryDecoder;
@@ -26,6 +25,7 @@ import com.alipay.sofa.jraft.entity.codec.v1.LogEntryV1CodecFactory;
 import com.alipay.sofa.jraft.entity.codec.v1.V1Decoder;
 import com.alipay.sofa.jraft.entity.codec.v1.V1Encoder;
 import com.alipay.sofa.jraft.util.CrcUtil;
+import com.alipay.sofa.jraft.util.SegmentList.EstimatedSize;
 
 /**
  * A replica log entry.
@@ -34,26 +34,31 @@ import com.alipay.sofa.jraft.util.CrcUtil;
  *
  * 2018-Mar-12 3:13:02 PM
  */
-public class LogEntry implements Checksum {
+public class LogEntry implements Checksum, EstimatedSize {
+
+    public static final ByteBuffer  EMPTY_DATA = ByteBuffer.wrap(new byte[0]);
+
+    // cached value for estimatedSize()
+    private volatile transient long estimatedSize;
 
     /** entry type */
-    private EnumOutter.EntryType type;
+    private EnumOutter.EntryType    type;
     /** log id with index/term */
-    private LogId                id = new LogId(0, 0);
+    private LogId                   id         = new LogId(0, 0);
     /** log entry current peers */
-    private List<PeerId>         peers;
+    private List<PeerId>            peers;
     /** log entry old peers */
-    private List<PeerId>         oldPeers;
+    private List<PeerId>            oldPeers;
     /** log entry current learners */
-    private List<PeerId>         learners;
+    private List<PeerId>            learners;
     /** log entry old learners */
-    private List<PeerId>         oldLearners;
+    private List<PeerId>            oldLearners;
     /** entry data */
-    private ByteBuffer           data;
+    private ByteBuffer              data       = EMPTY_DATA;
     /** checksum for log entry*/
-    private long                 checksum;
+    private long                    checksum;
     /** true when the log has checksum **/
-    private boolean              hasChecksum;
+    private boolean                 hasChecksum;
 
     public List<PeerId> getLearners() {
         return this.learners;
@@ -85,24 +90,34 @@ public class LogEntry implements Checksum {
                || (this.oldLearners != null && !this.oldLearners.isEmpty());
     }
 
+    // The estimated memory size of log entry
+    public long estimatedSize() {
+        if (this.estimatedSize > 0) {
+            return this.estimatedSize;
+        }
+
+        this.estimatedSize = 140L + estimatedSize(this.learners) + //
+                             estimatedSize(this.oldLearners) + //
+                             estimatedSize(this.peers) + //
+                             estimatedSize(this.oldPeers) + //
+                             (this.data != null ? this.data.remaining() : 0) + 56;
+
+        return this.estimatedSize;
+    }
+
+    private static int estimatedSize(List<PeerId> peers) {
+        return PeerId.ESTIMATED_BYTES * (peers != null ? peers.size() : 0);
+    }
+
     @Override
     public long checksum() {
         long c = checksum(this.type.getNumber(), this.id.checksum());
-        c = checksumPeers(this.peers, c);
-        c = checksumPeers(this.oldPeers, c);
-        c = checksumPeers(this.learners, c);
-        c = checksumPeers(this.oldLearners, c);
+        c = checksum(this.peers, c);
+        c = checksum(this.oldPeers, c);
+        c = checksum(this.learners, c);
+        c = checksum(this.oldLearners, c);
         if (this.data != null && this.data.hasRemaining()) {
             c = checksum(c, CrcUtil.crc64(this.data));
-        }
-        return c;
-    }
-
-    private long checksumPeers(final Collection<PeerId> peers, long c) {
-        if (peers != null && !peers.isEmpty()) {
-            for (final PeerId peer : peers) {
-                c = checksum(c, peer.checksum());
-            }
         }
         return c;
     }
@@ -203,8 +218,33 @@ public class LogEntry implements Checksum {
         this.oldPeers = oldPeers;
     }
 
+    /**
+     * Returns the log data, it's not read-only, you SHOULD take care it's modification and
+     * thread-safety by yourself.
+     *
+     * @return the log data
+     */
     public ByteBuffer getData() {
         return this.data;
+    }
+
+    /**
+     * Creates a new byte buffer whose content is a shared subsequence of this log entry's data
+     * buffer's content.
+     *
+     * @return The new byte buffer
+     */
+    public ByteBuffer sliceData() {
+        return this.data != null ? this.data.slice() : null;
+    }
+
+    /**
+     * Creates a new, read-only byte buffer that shares this log entry's data buffer's content.
+     *
+     * @return the new, read-only byte buffer
+     */
+    public ByteBuffer getReadOnlyData() {
+        return this.data != null ? this.data.asReadOnlyBuffer() : null;
     }
 
     public void setData(final ByteBuffer data) {

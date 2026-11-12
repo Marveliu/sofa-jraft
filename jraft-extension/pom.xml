@@ -4,7 +4,7 @@
     <parent>
         <artifactId>jraft-parent</artifactId>
         <groupId>com.alipay.sofa</groupId>
-        <version>1.3.5</version>
+        <version>1.4.1</version>
     </parent>
 
     <artifactId>jraft-extension</artifactId>
@@ -12,6 +12,7 @@
     <name>jraft-extension ${project.version}</name>
     <modules>
         <module>rpc-grpc-impl</module>
+        <module>bdb-log-storage-impl</module>
     </modules>
 
 </project>

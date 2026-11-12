@@ -24,13 +24,28 @@ import com.alipay.sofa.jraft.entity.RaftOutter.SnapshotMeta;
 import com.google.protobuf.Message;
 
 /**
- * Snapshot writer.
+ * Snapshot writer. <strong>Note: it's not thread-safe.</strong>
  *
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-12 4:52:10 PM
  */
 public abstract class SnapshotWriter extends Snapshot implements Closeable, Lifecycle<Void> {
+
+    private SnapshotMeta currentMeta;
+
+    /**
+     * Retrieve current snapshot meta.
+     * @return current snapshot meta info
+     * @since 1.3.11
+     */
+    public SnapshotMeta getCurrentMeta() {
+        return currentMeta;
+    }
+
+    void setCurrentMeta(SnapshotMeta currentMeta) {
+        this.currentMeta = currentMeta;
+    }
 
     /**
      * Save a snapshot metadata.

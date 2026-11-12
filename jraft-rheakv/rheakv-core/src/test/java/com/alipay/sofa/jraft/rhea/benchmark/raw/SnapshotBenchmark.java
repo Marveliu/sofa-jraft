@@ -26,6 +26,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.zip.Checksum;
+import java.util.zip.Deflater;
 
 import org.apache.commons.io.FileUtils;
 
@@ -172,7 +173,7 @@ public class SnapshotBenchmark extends BaseRawStoreBenchmark {
         this.kvStore.shutdown();
         FileUtils.deleteDirectory(new File(this.tempPath));
         FileUtils.forceMkdir(new File(this.tempPath));
-        this.kvStore = new RocksRawKVStore();
+        this.kvStore = new RocksRawKVStore("test");
         this.kvStore.init(this.dbOptions);
 
         final String name;
@@ -305,7 +306,7 @@ public class SnapshotBenchmark extends BaseRawStoreBenchmark {
         final String outputFile = Paths.get(path, SNAPSHOT_ARCHIVE).toString();
         try {
             final Checksum checksum = new CRC64();
-            ZipUtil.compress(path, SNAPSHOT_DIR, outputFile, checksum);
+            ZipUtil.compress(path, SNAPSHOT_DIR, outputFile, checksum, Deflater.DEFAULT_COMPRESSION);
             metaBuilder.setChecksum(Long.toHexString(checksum.getValue()));
         } catch (final Throwable t) {
             t.printStackTrace();

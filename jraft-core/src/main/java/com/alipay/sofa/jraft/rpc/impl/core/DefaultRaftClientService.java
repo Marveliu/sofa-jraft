@@ -21,6 +21,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Future;
 
+import com.alipay.sofa.jraft.Closure;
 import com.alipay.sofa.jraft.ReplicatorGroup;
 import com.alipay.sofa.jraft.Status;
 import com.alipay.sofa.jraft.error.RaftError;
@@ -59,12 +60,7 @@ import com.google.protobuf.Message;
  */
 public class DefaultRaftClientService extends AbstractClientService implements RaftClientService {
 
-    private static final FixedThreadsExecutorGroup  APPEND_ENTRIES_EXECUTORS = DefaultFixedThreadsExecutorGroupFactory.INSTANCE
-                                                                                 .newExecutorGroup(
-                                                                                     Utils.APPEND_ENTRIES_THREADS_SEND,
-                                                                                     "Append-Entries-Thread-Send",
-                                                                                     Utils.MAX_APPEND_ENTRIES_TASKS_PER_THREAD,
-                                                                                     true);
+    private final FixedThreadsExecutorGroup         appendEntriesExecutors;
 
     private final ConcurrentMap<Endpoint, Executor> appendEntriesExecutorMap = new ConcurrentHashMap<>();
 
@@ -78,7 +74,15 @@ public class DefaultRaftClientService extends AbstractClientService implements R
     }
 
     public DefaultRaftClientService(final ReplicatorGroup rgGroup) {
+        this(rgGroup, DefaultFixedThreadsExecutorGroupFactory.INSTANCE.newExecutorGroup(
+            Utils.APPEND_ENTRIES_THREADS_SEND, "Append-Entries-Thread-Send", Utils.MAX_APPEND_ENTRIES_TASKS_PER_THREAD,
+            true));
+    }
+
+    public DefaultRaftClientService(final ReplicatorGroup rgGroup,
+                                    final FixedThreadsExecutorGroup customAppendEntriesExecutors) {
         this.rgGroup = rgGroup;
+        this.appendEntriesExecutors = customAppendEntriesExecutors;
     }
 
     @Override
@@ -93,40 +97,33 @@ public class DefaultRaftClientService extends AbstractClientService implements R
     @Override
     public Future<Message> preVote(final Endpoint endpoint, final RequestVoteRequest request,
                                    final RpcResponseClosure<RequestVoteResponse> done) {
+        if (!checkConnection(endpoint, true)) {
+            return onConnectionFail(endpoint, request, done, this.rpcExecutor);
+        }
+
         return invokeWithDone(endpoint, request, done, this.nodeOptions.getElectionTimeoutMs());
     }
 
     @Override
     public Future<Message> requestVote(final Endpoint endpoint, final RequestVoteRequest request,
                                        final RpcResponseClosure<RequestVoteResponse> done) {
+        if (!checkConnection(endpoint, true)) {
+            return onConnectionFail(endpoint, request, done, this.rpcExecutor);
+        }
+
         return invokeWithDone(endpoint, request, done, this.nodeOptions.getElectionTimeoutMs());
     }
 
     @Override
     public Future<Message> appendEntries(final Endpoint endpoint, final AppendEntriesRequest request,
                                          final int timeoutMs, final RpcResponseClosure<AppendEntriesResponse> done) {
-        final Executor executor = this.appendEntriesExecutorMap.computeIfAbsent(endpoint, k -> APPEND_ENTRIES_EXECUTORS.next());
+        final Executor executor = this.appendEntriesExecutorMap.computeIfAbsent(endpoint, k -> appendEntriesExecutors.next());
 
-        if (checkConnection(endpoint, true)) {
-            return invokeWithDone(endpoint, request, done, timeoutMs, executor);
+        if (!checkConnection(endpoint, true)) {
+            return onConnectionFail(endpoint, request, done, executor);
         }
 
-        // fail-fast when no connection
-        final FutureImpl<Message> future = new FutureImpl<>();
-        executor.execute(() -> {
-            if (done != null) {
-                try {
-                    done.run(new Status(RaftError.EINTERNAL, "Check connection[%s] fail and try to create new one", endpoint));
-                } catch (final Throwable t) {
-                    LOG.error("Fail to run RpcResponseClosure, the request is {}.", request, t);
-                }
-            }
-            if (!future.isDone()) {
-                future.failure(new RemotingException("Check connection[" +
-                        endpoint.toString()  + "] fail and try to create new one"));
-            }
-        });
-        return future;
+        return invokeWithDone(endpoint, request, done, timeoutMs, executor);
     }
 
     @Override
@@ -154,5 +151,24 @@ public class DefaultRaftClientService extends AbstractClientService implements R
     public Future<Message> readIndex(final Endpoint endpoint, final ReadIndexRequest request, final int timeoutMs,
                                      final RpcResponseClosure<ReadIndexResponse> done) {
         return invokeWithDone(endpoint, request, done, timeoutMs);
+    }
+
+    // fail-fast when no connection
+    private Future<Message> onConnectionFail(final Endpoint endpoint, final Message request, Closure done, final Executor executor) {
+        final FutureImpl<Message> future = new FutureImpl<>();
+        executor.execute(() -> {
+            final String fmt = "Check connection[%s] fail and try to create new one";
+            if (done != null) {
+                try {
+                    done.run(new Status(RaftError.EINTERNAL, fmt, endpoint));
+                } catch (final Throwable t) {
+                    LOG.error("Fail to run RpcResponseClosure, the request is {}.", request, t);
+                }
+            }
+            if (!future.isDone()) {
+                future.failure(new RemotingException(String.format(fmt, endpoint)));
+            }
+        });
+        return future;
     }
 }

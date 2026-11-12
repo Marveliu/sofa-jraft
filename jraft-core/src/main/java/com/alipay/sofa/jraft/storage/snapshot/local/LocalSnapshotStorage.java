@@ -18,6 +18,7 @@ package com.alipay.sofa.jraft.storage.snapshot.local;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -28,6 +29,7 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -48,7 +50,7 @@ import com.alipay.sofa.jraft.util.Utils;
  * Snapshot storage based on local file storage.
  *
  * @author boyan (boyan@alibaba-inc.com)
- *
+ * <p>
  * 2018-Mar-13 2:11:30 PM
  */
 public class LocalSnapshotStorage implements SnapshotStorage {
@@ -58,6 +60,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
     private static final String                      TEMP_PATH = "temp";
     private final ConcurrentMap<Long, AtomicInteger> refMap    = new ConcurrentHashMap<>();
     private final String                             path;
+    private final String                             tempPath;
     private Endpoint                                 addr;
     private boolean                                  filterBeforeCopyRemote;
     private long                                     lastSnapshotIndex;
@@ -78,12 +81,31 @@ public class LocalSnapshotStorage implements SnapshotStorage {
         this.addr = addr;
     }
 
-    public LocalSnapshotStorage(String path, RaftOptions raftOptions) {
+    public LocalSnapshotStorage(String path, String tempPath, RaftOptions raftOptions) {
         super();
         this.path = path;
+        if (StringUtils.isEmpty(tempPath)) {
+            this.tempPath = buildTempPath(this.path);
+        } else {
+            File pathFile = new File(path);
+            File tempPathFile = new File(tempPath);
+
+            String pathAbsolutePath = pathFile.getAbsolutePath();
+            String tempPathAbsolutePath = tempPathFile.getAbsolutePath();
+            if (pathAbsolutePath.equals(tempPathAbsolutePath) || pathAbsolutePath.startsWith(tempPathAbsolutePath)) {
+                this.tempPath = buildTempPath(this.path);
+            } else {
+                this.tempPath = tempPath;
+            }
+            LOG.info("The snapshot temp path is {}", this.tempPath);
+        }
         this.lastSnapshotIndex = 0;
         this.raftOptions = raftOptions;
         this.lock = new ReentrantLock();
+    }
+
+    private String buildTempPath(String path) {
+        return Paths.get(path, TEMP_PATH).toString();
     }
 
     public long getLastSnapshotIndex() {
@@ -102,19 +124,18 @@ public class LocalSnapshotStorage implements SnapshotStorage {
         try {
             FileUtils.forceMkdir(dir);
         } catch (final IOException e) {
-            LOG.error("Fail to create directory {}.", this.path);
+            LOG.error("Fail to create directory {}.", this.path, e);
             return false;
         }
 
         // delete temp snapshot
         if (!this.filterBeforeCopyRemote) {
-            final String tempSnapshotPath = this.path + File.separator + TEMP_PATH;
-            final File tempFile = new File(tempSnapshotPath);
+            final File tempFile = new File(this.tempPath);
             if (tempFile.exists()) {
                 try {
                     FileUtils.forceDelete(tempFile);
                 } catch (final IOException e) {
-                    LOG.error("Fail to delete temp snapshot path {}.", tempSnapshotPath);
+                    LOG.error("Fail to delete temp snapshot path {}.", this.tempPath, e);
                     return false;
                 }
             }
@@ -170,7 +191,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             FileUtils.deleteDirectory(file);
             return true;
         } catch (final IOException e) {
-            LOG.error("Fail to destroy snapshot {}.", path);
+            LOG.error("Fail to destroy snapshot {}.", path, e);
             return false;
         }
     }
@@ -198,6 +219,8 @@ public class LocalSnapshotStorage implements SnapshotStorage {
 
     void close(final LocalSnapshotWriter writer, final boolean keepDataOnError) throws IOException {
         int ret = writer.getCode();
+        IOException ioe = null;
+
         // noinspection ConstantConditions
         do {
             if (ret != 0) {
@@ -209,8 +232,9 @@ public class LocalSnapshotStorage implements SnapshotStorage {
                     break;
                 }
             } catch (final IOException e) {
-                LOG.error("Fail to sync writer {}.", writer.getPath());
+                LOG.error("Fail to sync writer {}.", writer.getPath(), e);
                 ret = RaftError.EIO.getNumber();
+                ioe = e;
                 break;
             }
             final long oldIndex = getLastSnapshotIndex();
@@ -220,18 +244,19 @@ public class LocalSnapshotStorage implements SnapshotStorage {
                 break;
             }
             // rename temp to new
-            final String tempPath = this.path + File.separator + TEMP_PATH;
             final String newPath = getSnapshotPath(newIndex);
 
             if (!destroySnapshot(newPath)) {
                 LOG.warn("Delete new snapshot path failed, path is {}.", newPath);
                 ret = RaftError.EIO.getNumber();
+                ioe = new IOException("Fail to delete new snapshot path: " + newPath);
                 break;
             }
-            LOG.info("Renaming {} to {}.", tempPath, newPath);
-            if (!new File(tempPath).renameTo(new File(newPath))) {
-                LOG.error("Renamed temp snapshot failed, from path {} to path {}.", tempPath, newPath);
+            LOG.info("Renaming {} to {}.", this.tempPath, newPath);
+            if (!Utils.atomicMoveFile(new File(this.tempPath), new File(newPath), true)) {
+                LOG.error("Renamed temp snapshot failed, from path {} to path {}.", this.tempPath, newPath);
                 ret = RaftError.EIO.getNumber();
+                ioe = new IOException("Fail to rename temp snapshot from: " + this.tempPath + " to: " + newPath);
                 break;
             }
             ref(newIndex);
@@ -244,12 +269,18 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             }
             unref(oldIndex);
         } while (false);
-        if (ret != 0 && !keepDataOnError) {
-            destroySnapshot(writer.getPath());
+
+        if (ret != 0) {
+            LOG.warn("Close snapshot writer {} with exit code: {}.", writer.getPath(), ret);
+            if (!keepDataOnError) {
+                destroySnapshot(writer.getPath());
+            }
         }
-        if (ret == RaftError.EIO.getNumber()) {
-            throw new IOException();
+
+        if (ioe != null) {
+            throw ioe;
         }
+
     }
 
     @Override
@@ -272,15 +303,14 @@ public class LocalSnapshotStorage implements SnapshotStorage {
         LocalSnapshotWriter writer = null;
         // noinspection ConstantConditions
         do {
-            final String snapshotPath = this.path + File.separator + TEMP_PATH;
             // delete temp
             // TODO: Notify watcher before deleting
-            if (new File(snapshotPath).exists() && fromEmpty) {
-                if (!destroySnapshot(snapshotPath)) {
+            if (new File(this.tempPath).exists() && fromEmpty) {
+                if (!destroySnapshot(this.tempPath)) {
                     break;
                 }
             }
-            writer = new LocalSnapshotWriter(snapshotPath, this, this.raftOptions);
+            writer = new LocalSnapshotWriter(this.tempPath, this, this.raftOptions);
             if (!writer.init(null)) {
                 LOG.error("Fail to init snapshot writer.");
                 writer = null;

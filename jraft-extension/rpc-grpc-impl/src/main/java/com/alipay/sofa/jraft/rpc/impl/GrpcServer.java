@@ -153,7 +153,7 @@ public class GrpcServer implements RpcServer {
                                 responseObserver.onNext((Message) responseObj);
                                 responseObserver.onCompleted();
                             } catch (final Throwable t) {
-                                LOG.warn("[GRPC] failed to send response: {}.", t);
+                                LOG.warn("[GRPC] failed to send response.", t);
                             }
                         }
 
@@ -201,7 +201,7 @@ public class GrpcServer implements RpcServer {
                 .builder(interest) //
                 .addMethod(method, handler) //
                 .build();
-        
+
         this.handlerRegistry
             .addService(ServerInterceptors.intercept(serviceDef, this.serverInterceptors.toArray(new ServerInterceptor[0])));
     }
@@ -209,6 +209,11 @@ public class GrpcServer implements RpcServer {
     @Override
     public int boundPort() {
         return this.server.getPort();
+    }
+
+    @Override
+    public boolean isStarted() {
+        return started.get();
     }
 
     public void setDefaultExecutor(ExecutorService defaultExecutor) {

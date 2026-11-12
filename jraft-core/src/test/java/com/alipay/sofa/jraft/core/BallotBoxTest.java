@@ -39,17 +39,19 @@ import static org.junit.Assert.fail;
 
 @RunWith(value = MockitoJUnitRunner.class)
 public class BallotBoxTest {
-    private BallotBox        box;
+    private static final String GROUP_ID = "group001";
+    private BallotBox           box;
     @Mock
-    private FSMCaller        waiter;
-    private ClosureQueueImpl closureQueue;
+    private FSMCaller           waiter;
+    private ClosureQueueImpl    closureQueue;
 
     @Before
     public void setup() {
         BallotBoxOptions opts = new BallotBoxOptions();
-        this.closureQueue = new ClosureQueueImpl();
+        this.closureQueue = new ClosureQueueImpl(GROUP_ID);
         opts.setClosureQueue(this.closureQueue);
         opts.setWaiter(this.waiter);
+        opts.setLastCommittedIndex(0);
         box = new BallotBox();
         assertTrue(box.init(opts));
     }
@@ -60,10 +62,23 @@ public class BallotBoxTest {
     }
 
     @Test
+    public void initWithLastCommittedIndex() {
+        BallotBoxOptions opts = new BallotBoxOptions();
+        opts.setClosureQueue(this.closureQueue);
+        opts.setWaiter(this.waiter);
+        opts.setLastCommittedIndex(9);
+        box = new BallotBox();
+        assertTrue(box.init(opts));
+
+        assertEquals(box.getLastCommittedIndex(), 9);
+    }
+
+    @Test
     public void testResetPendingIndex() {
         assertEquals(0, closureQueue.getFirstIndex());
         assertEquals(0, box.getPendingIndex());
         assertTrue(box.resetPendingIndex(1));
+        assertEquals(0, box.getLastCommittedIndex());
         assertEquals(1, closureQueue.getFirstIndex());
         assertEquals(1, box.getPendingIndex());
     }
@@ -147,9 +162,10 @@ public class BallotBoxTest {
 
     @Test
     public void testSetLastCommittedIndex() {
+        Mockito.when(this.waiter.hasAvailableCapacity(1)).thenReturn(true);
         assertEquals(0, this.box.getLastCommittedIndex());
         assertTrue(this.box.setLastCommittedIndex(1));
         assertEquals(1, this.box.getLastCommittedIndex());
-        Mockito.verify(this.waiter, Mockito.only()).onCommitted(1);
+        Mockito.verify(this.waiter, Mockito.times(1)).onCommitted(1);
     }
 }

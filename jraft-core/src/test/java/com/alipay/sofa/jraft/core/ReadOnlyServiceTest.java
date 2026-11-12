@@ -36,6 +36,7 @@ import com.alipay.sofa.jraft.closure.ReadIndexClosure;
 import com.alipay.sofa.jraft.entity.PeerId;
 import com.alipay.sofa.jraft.entity.ReadIndexState;
 import com.alipay.sofa.jraft.entity.ReadIndexStatus;
+import com.alipay.sofa.jraft.option.NodeOptions;
 import com.alipay.sofa.jraft.option.RaftOptions;
 import com.alipay.sofa.jraft.option.ReadOnlyServiceOptions;
 import com.alipay.sofa.jraft.rpc.RpcRequests.ReadIndexRequest;
@@ -54,6 +55,7 @@ import static org.junit.Assert.assertTrue;
 @RunWith(MockitoJUnitRunner.class)
 public class ReadOnlyServiceTest {
 
+    public static final String  GROUP_ID = "test";
     private ReadOnlyServiceImpl readOnlyServiceImpl;
 
     @Mock
@@ -70,8 +72,11 @@ public class ReadOnlyServiceTest {
         opts.setNode(this.node);
         opts.setRaftOptions(new RaftOptions());
         Mockito.when(this.node.getNodeMetrics()).thenReturn(new NodeMetrics(false));
-        Mockito.when(this.node.getGroupId()).thenReturn("test");
+        Mockito.when(this.node.getOptions()).thenReturn(new NodeOptions());
+        Mockito.when(this.node.getGroupId()).thenReturn(GROUP_ID);
         Mockito.when(this.node.getServerId()).thenReturn(new PeerId("localhost:8081", 0));
+        Mockito.when(this.node.getRaftOptions()).thenReturn(new RaftOptions());
+
         assertTrue(this.readOnlyServiceImpl.init(opts));
     }
 
@@ -265,5 +270,52 @@ public class ReadOnlyServiceTest {
         this.readOnlyServiceImpl.onApplied(2);
         latch.await();
         assertTrue(this.readOnlyServiceImpl.getPendingNotifyStatus().isEmpty());
+    }
+
+    @Test
+    public void testOverMaxReadIndexLag() throws Exception {
+        Mockito.when(this.fsmCaller.getLastAppliedIndex()).thenReturn(1L);
+        this.readOnlyServiceImpl.getRaftOptions().setMaxReadIndexLag(50);
+
+        final byte[] requestContext = TestUtils.getRandomBytes();
+        final CountDownLatch latch = new CountDownLatch(1);
+        final String errMsg = "Fail to run ReadIndex task, the gap of current node's apply index between leader's commit index over maxReadIndexLag";
+        this.readOnlyServiceImpl.addRequest(requestContext, new ReadIndexClosure() {
+
+            @Override
+            public void run(final Status status, final long index, final byte[] reqCtx) {
+                assertFalse(status.isOk());
+                assertEquals(status.getErrorMsg(), errMsg);
+                assertEquals(index, -1);
+                assertArrayEquals(reqCtx, requestContext);
+                latch.countDown();
+            }
+        });
+        this.readOnlyServiceImpl.flush();
+
+        final ArgumentCaptor<RpcResponseClosure> closureCaptor = ArgumentCaptor.forClass(RpcResponseClosure.class);
+
+        Mockito.verify(this.node).handleReadIndexRequest(Mockito.argThat(new ArgumentMatcher<ReadIndexRequest>() {
+
+            @Override
+            public boolean matches(final Object argument) {
+                if (argument instanceof ReadIndexRequest) {
+                    final ReadIndexRequest req = (ReadIndexRequest) argument;
+                    return req.getGroupId().equals("test") && req.getServerId().equals("localhost:8081:0")
+                           && req.getEntriesCount() == 1
+                           && Arrays.equals(requestContext, req.getEntries(0).toByteArray());
+                }
+                return false;
+            }
+
+        }), closureCaptor.capture());
+
+        final RpcResponseClosure closure = closureCaptor.getValue();
+
+        assertNotNull(closure);
+
+        closure.setResponse(ReadIndexResponse.newBuilder().setIndex(52).setSuccess(true).build());
+        closure.run(Status.OK());
+        latch.await();
     }
 }

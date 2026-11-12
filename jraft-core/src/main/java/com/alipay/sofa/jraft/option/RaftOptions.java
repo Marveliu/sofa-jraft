@@ -16,6 +16,8 @@
  */
 package com.alipay.sofa.jraft.option;
 
+import com.alipay.sofa.jraft.Node;
+import com.alipay.sofa.jraft.closure.ReadIndexClosure;
 import com.alipay.sofa.jraft.util.Copiable;
 import com.alipay.sofa.jraft.util.RpcFactoryHelper;
 
@@ -40,6 +42,8 @@ public class RaftOptions implements Copiable<RaftOptions> {
     private int            maxAppendBufferSize                  = 256 * 1024;
     /** Maximum election delay time allowed by user */
     private int            maxElectionDelayMs                   = 1000;
+    /** Maximum cached log entries memory (bytes). This is a soft limit; any negative integers means no limit, -1 by default. */
+    private long           maxLogsInMemoryBytes                 = -1;
     /** Raft election:heartbeat timeout factor */
     private int            electionHeartbeatFactor              = 10;
     /** Maximum number of tasks that can be applied in a batch */
@@ -70,6 +74,8 @@ public class RaftOptions implements Copiable<RaftOptions> {
 
     /**
      * ReadOnlyOption specifies how the read only request is processed.
+     * This is a global configuration, you can use {@link Node#readIndex(ReadOnlyOption, byte[], ReadIndexClosure)}
+     * to specify how individual requests are processed.
      *
      * {@link ReadOnlyOption#ReadOnlySafe} guarantees the linearizability of the read only request by
      * communicating with the quorum. It is the default and suggested option.
@@ -81,11 +87,35 @@ public class RaftOptions implements Copiable<RaftOptions> {
      * in that case.
      */
     private ReadOnlyOption readOnlyOptions                      = ReadOnlyOption.ReadOnlySafe;
+
+    /**
+     * Maximum log lag threshold for ReadIndex optimization.
+     *
+     * <p>Follower side: When a follower's apply index lags behind the leader's commit index
+     * by more than this threshold, fail fast instead of waiting for the default 2s timeout.
+     *
+     * <p>Leader side: When processing ReadIndex requests, skip sending heartbeats to followers
+     * whose log replication lag exceeds this threshold, as long as there are still enough healthy
+     * peers to form a quorum. This reduces unnecessary network overhead when some followers are
+     * significantly behind.
+     *
+     * <p>Set to -1 to disable this optimization (no filtering).
+     *
+     * @since 1.4.0
+     */
+    private int            maxReadIndexLag                      = -1;
+
     /**
      * Candidate steps down when election reaching timeout, default is true(enabled).
      * @since 1.3.0
      */
     private boolean        stepDownWhenVoteTimedout             = true;
+
+    /**
+     * Check whether start up old storage (RocksdbLogStorage) when use newLogStorage
+     * This option needs to be set to true if logs still exists in RocksdbLogStorage
+     */
+    private boolean        startupOldStorage                    = false;
 
     public boolean isStepDownWhenVoteTimedout() {
         return this.stepDownWhenVoteTimedout;
@@ -97,6 +127,18 @@ public class RaftOptions implements Copiable<RaftOptions> {
 
     public int getDisruptorPublishEventWaitTimeoutSecs() {
         return this.disruptorPublishEventWaitTimeoutSecs;
+    }
+
+    public long getMaxLogsInMemoryBytes() {
+        return maxLogsInMemoryBytes;
+    }
+
+    /**
+     * Maximum cached log entries memory (bytes). This is a soft limit; -1 means no limit. Default is -1.
+     * @param maxLogsInMemoryBytes
+     */
+    public void setMaxLogsInMemoryBytes(long maxLogsInMemoryBytes) {
+        this.maxLogsInMemoryBytes = maxLogsInMemoryBytes;
     }
 
     public void setDisruptorPublishEventWaitTimeoutSecs(final int disruptorPublishEventWaitTimeoutSecs) {
@@ -117,6 +159,14 @@ public class RaftOptions implements Copiable<RaftOptions> {
 
     public void setReadOnlyOptions(final ReadOnlyOption readOnlyOptions) {
         this.readOnlyOptions = readOnlyOptions;
+    }
+
+    public int getMaxReadIndexLag() {
+        return maxReadIndexLag;
+    }
+
+    public void setMaxReadIndexLag(int maxReadIndexLag) {
+        this.maxReadIndexLag = maxReadIndexLag;
     }
 
     public boolean isReplicatorPipeline() {
@@ -231,6 +281,14 @@ public class RaftOptions implements Copiable<RaftOptions> {
         this.openStatistics = openStatistics;
     }
 
+    public boolean isStartupOldStorage() {
+        return startupOldStorage;
+    }
+
+    public void setStartupOldStorage(final boolean startupOldStorage) {
+        this.startupOldStorage = startupOldStorage;
+    }
+
     @Override
     public RaftOptions copy() {
         final RaftOptions raftOptions = new RaftOptions();
@@ -251,20 +309,22 @@ public class RaftOptions implements Copiable<RaftOptions> {
         raftOptions.setDisruptorPublishEventWaitTimeoutSecs(this.disruptorPublishEventWaitTimeoutSecs);
         raftOptions.setEnableLogEntryChecksum(this.enableLogEntryChecksum);
         raftOptions.setReadOnlyOptions(this.readOnlyOptions);
+        raftOptions.setStartupOldStorage(this.startupOldStorage);
+        raftOptions.setMaxLogsInMemoryBytes(this.maxLogsInMemoryBytes);
         return raftOptions;
     }
 
     @Override
     public String toString() {
-        return "RaftOptions{" + "maxByteCountPerRpc=" + this.maxByteCountPerRpc + ", fileCheckHole="
-               + this.fileCheckHole + ", maxEntriesSize=" + this.maxEntriesSize + ", maxBodySize=" + this.maxBodySize
-               + ", maxAppendBufferSize=" + this.maxAppendBufferSize + ", maxElectionDelayMs="
-               + this.maxElectionDelayMs + ", electionHeartbeatFactor=" + this.electionHeartbeatFactor
-               + ", applyBatch=" + this.applyBatch + ", sync=" + this.sync + ", syncMeta=" + this.syncMeta
-               + ", openStatistics=" + this.openStatistics + ", replicatorPipeline=" + this.replicatorPipeline
-               + ", maxReplicatorInflightMsgs=" + this.maxReplicatorInflightMsgs + ", disruptorBufferSize="
-               + this.disruptorBufferSize + ", disruptorPublishEventWaitTimeoutSecs="
-               + this.disruptorPublishEventWaitTimeoutSecs + ", enableLogEntryChecksum=" + this.enableLogEntryChecksum
-               + ", readOnlyOptions=" + this.readOnlyOptions + '}';
+        return "RaftOptions{" + "maxByteCountPerRpc=" + maxByteCountPerRpc + ", fileCheckHole=" + fileCheckHole
+               + ", maxEntriesSize=" + maxEntriesSize + ", maxBodySize=" + maxBodySize + ", maxAppendBufferSize="
+               + maxAppendBufferSize + ", maxElectionDelayMs=" + maxElectionDelayMs + ", electionHeartbeatFactor="
+               + electionHeartbeatFactor + ", applyBatch=" + applyBatch + ", sync=" + sync + ", syncMeta=" + syncMeta
+               + ", openStatistics=" + openStatistics + ", replicatorPipeline=" + replicatorPipeline
+               + ", maxReplicatorInflightMsgs=" + maxReplicatorInflightMsgs + ", disruptorBufferSize="
+               + disruptorBufferSize + ", disruptorPublishEventWaitTimeoutSecs=" + disruptorPublishEventWaitTimeoutSecs
+               + ", enableLogEntryChecksum=" + enableLogEntryChecksum + ", readOnlyOptions=" + readOnlyOptions
+               + ", maxReadIndexLag=" + maxReadIndexLag + ", stepDownWhenVoteTimedout=" + stepDownWhenVoteTimedout
+               + ", startUpOldStorage=" + startupOldStorage + '}';
     }
 }

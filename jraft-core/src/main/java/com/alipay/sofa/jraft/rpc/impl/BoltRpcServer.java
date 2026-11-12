@@ -21,7 +21,7 @@ import java.util.concurrent.Executor;
 import com.alipay.remoting.AsyncContext;
 import com.alipay.remoting.BizContext;
 import com.alipay.remoting.ConnectionEventType;
-import com.alipay.remoting.config.switches.GlobalSwitch;
+import com.alipay.remoting.config.BoltClientOption;
 import com.alipay.remoting.rpc.protocol.AsyncUserProcessor;
 import com.alipay.sofa.jraft.rpc.Connection;
 import com.alipay.sofa.jraft.rpc.RpcContext;
@@ -44,7 +44,7 @@ public class BoltRpcServer implements RpcServer {
 
     @Override
     public boolean init(final Void opts) {
-        this.rpcServer.switches().turnOn(GlobalSwitch.CODEC_FLUSH_CONSOLIDATION);
+        this.rpcServer.option(BoltClientOption.NETTY_FLUSH_CONSOLIDATION, true);
         this.rpcServer.initWriteBufferWaterMark(BoltRaftRpcFactory.CHANNEL_WRITE_BUF_LOW_WATER_MARK,
             BoltRaftRpcFactory.CHANNEL_WRITE_BUF_HIGH_WATER_MARK);
         this.rpcServer.startup();
@@ -89,6 +89,11 @@ public class BoltRpcServer implements RpcServer {
     @Override
     public int boundPort() {
         return this.rpcServer.port();
+    }
+
+    @Override
+    public boolean isStarted() {
+        return rpcServer.isStarted();
     }
 
     @Override

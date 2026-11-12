@@ -16,7 +16,8 @@
  */
 package com.alipay.sofa.jraft.core;
 
-import org.apache.commons.lang.StringUtils;
+import com.alipay.sofa.jraft.option.NodeOptions;
+import org.apache.commons.lang3.StringUtils;
 
 import com.alipay.sofa.jraft.JRaftServiceFactory;
 import com.alipay.sofa.jraft.entity.codec.LogEntryCodecFactory;
@@ -51,9 +52,11 @@ public class DefaultJRaftServiceFactory implements JRaftServiceFactory {
     }
 
     @Override
-    public SnapshotStorage createSnapshotStorage(final String uri, final RaftOptions raftOptions) {
+    public SnapshotStorage createSnapshotStorage(final NodeOptions nodeOptions) {
+        String uri = nodeOptions.getSnapshotUri();
+        String tempUri = nodeOptions.getSnapshotTempUri();
         Requires.requireTrue(!StringUtils.isBlank(uri), "Blank snapshot storage uri.");
-        return new LocalSnapshotStorage(uri, raftOptions);
+        return new LocalSnapshotStorage(uri, tempUri, nodeOptions.getRaftOptions());
     }
 
     @Override

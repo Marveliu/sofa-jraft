@@ -16,10 +16,6 @@
  */
 package com.alipay.sofa.jraft.core;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-
 import java.util.concurrent.CountDownLatch;
 
 import org.junit.After;
@@ -51,23 +47,31 @@ import com.alipay.sofa.jraft.storage.snapshot.SnapshotReader;
 import com.alipay.sofa.jraft.storage.snapshot.SnapshotWriter;
 import com.alipay.sofa.jraft.test.TestUtils;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+
 @RunWith(value = MockitoJUnitRunner.class)
 public class FSMCallerTest {
-    private FSMCallerImpl    fsmCaller;
+    private static final String GROUP_ID = "group001";
+    private FSMCallerImpl       fsmCaller;
     @Mock
-    private NodeImpl         node;
+    private NodeImpl            node;
     @Mock
-    private StateMachine     fsm;
+    private StateMachine        fsm;
     @Mock
-    private LogManager       logManager;
-    private ClosureQueueImpl closureQueue;
+    private LogManager          logManager;
+    private ClosureQueueImpl    closureQueue;
 
     @Before
     public void setup() {
         this.fsmCaller = new FSMCallerImpl();
-        this.closureQueue = new ClosureQueueImpl();
+        this.closureQueue = new ClosureQueueImpl(GROUP_ID);
         final FSMCallerOptions opts = new FSMCallerOptions();
         Mockito.when(this.node.getNodeMetrics()).thenReturn(new NodeMetrics(false));
+        Mockito.when(this.node.getGroupId()).thenReturn(GROUP_ID);
         opts.setNode(this.node);
         opts.setFsm(this.fsm);
         opts.setLogManager(this.logManager);
@@ -99,6 +103,7 @@ public class FSMCallerTest {
         assertTrue(this.fsmCaller.onCommitted(11));
 
         this.fsmCaller.flush();
+        assertEquals(this.fsmCaller.getLastCommittedIndex(), 11);
         assertEquals(this.fsmCaller.getLastAppliedIndex(), 10);
         Mockito.verify(this.logManager).setAppliedId(new LogId(10, 1));
         assertFalse(this.fsmCaller.getError().getStatus().isOk());
@@ -118,6 +123,7 @@ public class FSMCallerTest {
         assertTrue(this.fsmCaller.onCommitted(11));
 
         this.fsmCaller.flush();
+        assertEquals(this.fsmCaller.getLastCommittedIndex(), 11);
         assertEquals(this.fsmCaller.getLastAppliedIndex(), 11);
         Mockito.verify(this.fsm).onApply(itArg.capture());
         final Iterator it = itArg.getValue();
@@ -149,6 +155,7 @@ public class FSMCallerTest {
             }
         });
         latch.await();
+        assertEquals(this.fsmCaller.getLastCommittedIndex(), 12);
         assertEquals(this.fsmCaller.getLastAppliedIndex(), 12);
         Mockito.verify(this.fsm).onConfigurationCommitted(Mockito.any());
     }
@@ -177,6 +184,7 @@ public class FSMCallerTest {
             }
         });
         latch.await();
+        assertEquals(this.fsmCaller.getLastCommittedIndex(), 10);
         assertEquals(this.fsmCaller.getLastAppliedIndex(), 10);
     }
 
@@ -221,6 +229,37 @@ public class FSMCallerTest {
         };
         this.fsmCaller.onSnapshotSave(done);
         this.fsmCaller.flush();
+        Mockito.verify(this.fsm).onSnapshotSave(writer, done);
+    }
+
+    @Test
+    public void testIsRunningOnFSMThread() throws Exception {
+        assertFalse(fsmCaller.isRunningOnFSMThread());
+        assertNull(fsmCaller.getFsmThread());
+        this.testOnCommitted();
+        assertNotNull(fsmCaller.getFsmThread());
+        assertTrue(fsmCaller.getFsmThread().getName().startsWith("JRaft-FSMCaller-Disruptor-"));
+    }
+
+    @Test
+    public void testOnSnapshotSaveSync() throws Exception {
+        final SnapshotWriter writer = Mockito.mock(SnapshotWriter.class);
+        Mockito.when(this.logManager.getConfiguration(10)).thenReturn(
+            TestUtils.getConfEntry("localhost:8081,localhost:8082,localhost:8083", "localhost:8081"));
+        final SaveSnapshotClosure done = new SaveSnapshotClosure() {
+
+            @Override
+            public void run(final Status status) {
+
+            }
+
+            @Override
+            public SnapshotWriter start(final SnapshotMeta meta) {
+                assertEquals(10, meta.getLastIncludedIndex());
+                return writer;
+            }
+        };
+        this.fsmCaller.onSnapshotSaveSync(done);
         Mockito.verify(this.fsm).onSnapshotSave(writer, done);
     }
 
@@ -281,6 +320,7 @@ public class FSMCallerTest {
             }
         });
         latch.await();
+        assertEquals(this.fsmCaller.getLastCommittedIndex(), 10);
         assertEquals(this.fsmCaller.getLastAppliedIndex(), 10);
     }
 

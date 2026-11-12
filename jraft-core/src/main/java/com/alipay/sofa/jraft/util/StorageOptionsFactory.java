@@ -17,6 +17,7 @@
 package com.alipay.sofa.jraft.util;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.rocksdb.BlockBasedTableConfig;
@@ -31,7 +32,6 @@ import org.rocksdb.RocksObject;
 import org.rocksdb.util.SizeUnit;
 
 /**
- *
  * @author jiachun.fjc
  */
 public final class StorageOptionsFactory {
@@ -64,37 +64,59 @@ public final class StorageOptionsFactory {
         }
     }
 
+    private static String buildKey(final String groupId, final Class<?> cls) {
+        Requires.requireNonNull(cls, "cls");
+        if (Objects.isNull(groupId)) {
+            return cls.getName();
+        }
+        return groupId + "-" + cls.getName();
+    }
+
     /**
      * Users can register a custom rocksdb dboptions, then the related
      * classes will get their options by the key of their own class
      * name.  If the user does not register an options, a default options
      * will be provided.
-     *
+     * @param  groupId raft group id
+     * @param cls  the key of DBOptions
+     * @param opts the DBOptions
+     */
+    public static void registerRocksDBOptions(final String groupId, final Class<?> cls, final DBOptions opts) {
+        Requires.requireNonNull(cls, "cls");
+        Requires.requireNonNull(opts, "opts");
+        String key = buildKey(groupId, cls);
+        if (rocksDBOptionsTable.putIfAbsent(key, opts) != null) {
+            throw new IllegalStateException("DBOptions with class key [" + key + "] has already been registered");
+        }
+    }
+
+    /**
+     * Users can register a custom rocksdb dboptions, then the related
+     * classes will get their options by the key of their own class
+     * name.  If the user does not register an options, a default options
+     * will be provided.
      * @param cls  the key of DBOptions
      * @param opts the DBOptions
      */
     public static void registerRocksDBOptions(final Class<?> cls, final DBOptions opts) {
-        Requires.requireNonNull(cls, "cls");
-        Requires.requireNonNull(opts, "opts");
-        if (rocksDBOptionsTable.putIfAbsent(cls.getName(), opts) != null) {
-            throw new IllegalStateException("DBOptions with class key [" + cls.getName()
-                                            + "] has already been registered");
-        }
+        registerRocksDBOptions(null, cls, opts);
     }
 
     /**
      * Get a new default DBOptions or a copy of the exist DBOptions.
      * Users should call DBOptions#close() to release resources themselves.
      *
+     * @param  groupId raft group id
      * @param cls the key of DBOptions
      * @return new default DBOptions or a copy of the exist DBOptions
      */
-    public static DBOptions getRocksDBOptions(final Class<?> cls) {
+    public static DBOptions getRocksDBOptions(final String groupId, final Class<?> cls) {
         Requires.requireNonNull(cls, "cls");
-        DBOptions opts = rocksDBOptionsTable.get(cls.getName());
+        String key = buildKey(groupId, cls);
+        DBOptions opts = rocksDBOptionsTable.get(key);
         if (opts == null) {
             final DBOptions newOpts = getDefaultRocksDBOptions();
-            opts = rocksDBOptionsTable.putIfAbsent(cls.getName(), newOpts);
+            opts = rocksDBOptionsTable.putIfAbsent(key, newOpts);
             if (opts == null) {
                 opts = newOpts;
             } else {
@@ -117,21 +139,42 @@ public final class StorageOptionsFactory {
         // If true, missing column families will be automatically created.
         opts.setCreateMissingColumnFamilies(true);
 
-        // Number of open files that can be used by the DB.  You may need to increase
+        // Number of open files that can be used by the DB. You may need to increase
         // this if your database has a large working set. Value -1 means files opened
         // are always kept open.
         opts.setMaxOpenFiles(-1);
 
-        // The maximum number of concurrent background compactions. The default is 1,
-        // but to fully utilize your CPU and storage you might want to increase this
-        // to approximately number of cores in the system.
-        opts.setMaxBackgroundCompactions(Math.min(Utils.cpus(), 4));
+        // To limit the num of LOG. Once LOG exceed this num, RocksDB will delete old LOG
+        // automatically.
+        opts.setKeepLogFileNum(100);
 
-        // The maximum number of concurrent flush operations. It is usually good enough
-        // to set this to 1.
-        opts.setMaxBackgroundFlushes(1);
+        // To limit the size of WALs. Once WALs exceed this size, RocksDB will start
+        // forcing the flush of column families to allow deletion of some oldest WALs.
+        // We make it 1G as default.
+        opts.setMaxTotalWalSize(1 << 30);
 
         return opts;
+    }
+
+    /**
+     * Users can register a custom rocksdb ColumnFamilyOptions, then the
+     * related classes will get their options by the key of their own class
+     * name.  If the user does not register an options, a default options
+     * will be provided.
+     *
+     * @param  groupId raft group id
+     * @param cls  the key of ColumnFamilyOptions
+     * @param opts the ColumnFamilyOptions
+     */
+    public static void registerRocksDBColumnFamilyOptions(final String groupId, final Class<?> cls,
+                                                          final ColumnFamilyOptions opts) {
+        Requires.requireNonNull(cls, "cls");
+        Requires.requireNonNull(opts, "opts");
+        String key = buildKey(groupId, cls);
+        if (columnFamilyOptionsTable.putIfAbsent(key, opts) != null) {
+            throw new IllegalStateException("ColumnFamilyOptions with class key [" + key
+                                            + "] has already been registered");
+        }
     }
 
     /**
@@ -144,12 +187,7 @@ public final class StorageOptionsFactory {
      * @param opts the ColumnFamilyOptions
      */
     public static void registerRocksDBColumnFamilyOptions(final Class<?> cls, final ColumnFamilyOptions opts) {
-        Requires.requireNonNull(cls, "cls");
-        Requires.requireNonNull(opts, "opts");
-        if (columnFamilyOptionsTable.putIfAbsent(cls.getName(), opts) != null) {
-            throw new IllegalStateException("ColumnFamilyOptions with class key [" + cls.getName()
-                                            + "] has already been registered");
-        }
+        registerRocksDBColumnFamilyOptions(null, cls, opts);
     }
 
     /**
@@ -157,16 +195,18 @@ public final class StorageOptionsFactory {
      * ColumnFamilyOptions.  Users should call ColumnFamilyOptions#close()
      * to release resources themselves.
      *
+     * @param  groupId raft group id
      * @param cls the key of ColumnFamilyOptions
      * @return new default ColumnFamilyOptions or a copy of the exist
      * ColumnFamilyOptions
      */
-    public static ColumnFamilyOptions getRocksDBColumnFamilyOptions(final Class<?> cls) {
+    public static ColumnFamilyOptions getRocksDBColumnFamilyOptions(final String groupId, final Class<?> cls) {
         Requires.requireNonNull(cls, "cls");
-        ColumnFamilyOptions opts = columnFamilyOptionsTable.get(cls.getName());
+        String key = buildKey(groupId, cls);
+        ColumnFamilyOptions opts = columnFamilyOptionsTable.get(key);
         if (opts == null) {
             final ColumnFamilyOptions newOpts = getDefaultRocksDBColumnFamilyOptions();
-            opts = columnFamilyOptionsTable.putIfAbsent(cls.getName(), newOpts);
+            opts = columnFamilyOptionsTable.putIfAbsent(key, newOpts);
             if (opts == null) {
                 opts = newOpts;
             } else {
@@ -264,30 +304,47 @@ public final class StorageOptionsFactory {
      * classes will get their options by the key of their own class name.  If
      * the user does not register a config, a default config will be provided.
      *
+     * @param  groupId raft group id
      * @param cls the key of BlockBasedTableConfig
      * @param cfg the BlockBasedTableConfig
      */
-    public static void registerRocksDBTableFormatConfig(final Class<?> cls, final BlockBasedTableConfig cfg) {
+    public static void registerRocksDBTableFormatConfig(final String groupId, final Class<?> cls,
+                                                        final BlockBasedTableConfig cfg) {
         Requires.requireNonNull(cls, "cls");
         Requires.requireNonNull(cfg, "cfg");
-        if (tableFormatConfigTable.putIfAbsent(cls.getName(), cfg) != null) {
-            throw new IllegalStateException("TableFormatConfig with class key [" + cls.getName()
+        String key = buildKey(groupId, cls);
+        if (tableFormatConfigTable.putIfAbsent(key, cfg) != null) {
+            throw new IllegalStateException("TableFormatConfig with class key [" + key
                                             + "] has already been registered");
         }
     }
 
     /**
+     * Users can register a custom rocksdb BlockBasedTableConfig, then the related
+     * classes will get their options by the key of their own class name.  If
+     * the user does not register a config, a default config will be provided.
+     *
+     * @param cls the key of BlockBasedTableConfig
+     * @param cfg the BlockBasedTableConfig
+     */
+    public static void registerRocksDBTableFormatConfig(final Class<?> cls, final BlockBasedTableConfig cfg) {
+        registerRocksDBTableFormatConfig(null, cls, cfg);
+    }
+
+    /**
      * Get a new default TableFormatConfig or a copy of the exist ableFormatConfig.
      *
+     * @param  groupId raft group id
      * @param cls the key of TableFormatConfig
      * @return new default TableFormatConfig or a copy of the exist TableFormatConfig
      */
-    public static BlockBasedTableConfig getRocksDBTableFormatConfig(final Class<?> cls) {
+    public static BlockBasedTableConfig getRocksDBTableFormatConfig(final String groupId, final Class<?> cls) {
         Requires.requireNonNull(cls, "cls");
-        BlockBasedTableConfig cfg = tableFormatConfigTable.get(cls.getName());
+        String key = buildKey(groupId, cls);
+        BlockBasedTableConfig cfg = tableFormatConfigTable.get(key);
         if (cfg == null) {
             final BlockBasedTableConfig newCfg = getDefaultRocksDBTableConfig();
-            cfg = tableFormatConfigTable.putIfAbsent(cls.getName(), newCfg);
+            cfg = tableFormatConfigTable.putIfAbsent(key, newCfg);
             if (cfg == null) {
                 cfg = newCfg;
             }
@@ -301,23 +358,19 @@ public final class StorageOptionsFactory {
             // Begin to use partitioned index filters
             // https://github.com/facebook/rocksdb/wiki/Partitioned-Index-Filters#how-to-use-it
             .setIndexType(IndexType.kTwoLevelIndexSearch) //
-            .setFilter(new BloomFilter(16, false)) //
+            .setFilterPolicy(new BloomFilter((double) 16, false)) //
             .setPartitionFilters(true) //
             .setMetadataBlockSize(8 * SizeUnit.KB) //
             .setCacheIndexAndFilterBlocks(false) //
             .setCacheIndexAndFilterBlocksWithHighPriority(true) //
             .setPinL0FilterAndIndexBlocksInCache(true) //
             // End of partitioned index filters settings.
-            .setBlockSize(4 * SizeUnit.KB)//
-            .setBlockCacheSize(512 * SizeUnit.MB) //
-            .setCacheNumShardBits(8);
+            .setBlockSize(4 * SizeUnit.KB);
     }
 
     private static BlockBasedTableConfig copyTableFormatConfig(final BlockBasedTableConfig cfg) {
         return new BlockBasedTableConfig() //
             .setNoBlockCache(cfg.noBlockCache()) //
-            .setBlockCacheSize(cfg.blockCacheSize()) //
-            .setCacheNumShardBits(cfg.cacheNumShardBits()) //
             .setBlockSize(cfg.blockSize()) //
             .setBlockSizeDeviation(cfg.blockSizeDeviation()) //
             .setBlockRestartInterval(cfg.blockRestartInterval()) //
@@ -328,9 +381,6 @@ public final class StorageOptionsFactory {
             .setPartitionFilters(cfg.partitionFilters()) //
             .setMetadataBlockSize(cfg.metadataBlockSize()) //
             .setPinTopLevelIndexAndFilter(cfg.pinTopLevelIndexAndFilter()) //
-            .setHashIndexAllowCollision(cfg.hashIndexAllowCollision()) //
-            .setBlockCacheCompressedSize(cfg.blockCacheCompressedSize()) //
-            .setBlockCacheCompressedNumShardBits(cfg.blockCacheCompressedNumShardBits()) //
             .setChecksumType(cfg.checksumType()) //
             .setIndexType(cfg.indexType()) //
             .setFormatVersion(cfg.formatVersion());

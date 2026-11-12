@@ -30,13 +30,13 @@ import com.alipay.sofa.jraft.FSMCaller;
 import com.alipay.sofa.jraft.StateMachine;
 import com.alipay.sofa.jraft.Status;
 import com.alipay.sofa.jraft.closure.ClosureQueue;
+import com.alipay.sofa.jraft.closure.InternalClosure;
 import com.alipay.sofa.jraft.closure.LoadSnapshotClosure;
 import com.alipay.sofa.jraft.closure.SaveSnapshotClosure;
 import com.alipay.sofa.jraft.closure.TaskClosure;
 import com.alipay.sofa.jraft.conf.Configuration;
 import com.alipay.sofa.jraft.conf.ConfigurationEntry;
 import com.alipay.sofa.jraft.entity.EnumOutter;
-import com.alipay.sofa.jraft.entity.EnumOutter.ErrorType;
 import com.alipay.sofa.jraft.entity.LeaderChangeContext;
 import com.alipay.sofa.jraft.entity.LogEntry;
 import com.alipay.sofa.jraft.entity.LogId;
@@ -54,6 +54,7 @@ import com.alipay.sofa.jraft.util.LogExceptionHandler;
 import com.alipay.sofa.jraft.util.NamedThreadFactory;
 import com.alipay.sofa.jraft.util.OnlyForTest;
 import com.alipay.sofa.jraft.util.Requires;
+import com.alipay.sofa.jraft.util.ThreadPoolsFactory;
 import com.alipay.sofa.jraft.util.Utils;
 import com.lmax.disruptor.BlockingWaitStrategy;
 import com.lmax.disruptor.EventFactory;
@@ -140,19 +141,30 @@ public class FSMCallerImpl implements FSMCaller {
     }
 
     private class ApplyTaskHandler implements EventHandler<ApplyTask> {
+        boolean      firstRun          = true;
         // max committed index in current batch, reset to -1 every batch
         private long maxCommittedIndex = -1;
 
         @Override
         public void onEvent(final ApplyTask event, final long sequence, final boolean endOfBatch) throws Exception {
+            setFsmThread();
             this.maxCommittedIndex = runApplyTask(event, this.maxCommittedIndex, endOfBatch);
+        }
+
+        private void setFsmThread() {
+            if (firstRun) {
+                fsmThread = Thread.currentThread();
+                firstRun = false;
+            }
         }
     }
 
+    private volatile Thread                                         fsmThread;
     private LogManager                                              logManager;
     private StateMachine                                            fsm;
     private ClosureQueue                                            closureQueue;
     private final AtomicLong                                        lastAppliedIndex;
+    private final AtomicLong                                        lastCommittedIndex;
     private long                                                    lastAppliedTerm;
     private Closure                                                 afterShutdown;
     private NodeImpl                                                node;
@@ -170,8 +182,10 @@ public class FSMCallerImpl implements FSMCaller {
         this.currTask = TaskType.IDLE;
         this.lastAppliedIndex = new AtomicLong(0);
         this.applyingIndex = new AtomicLong(0);
+        this.lastCommittedIndex = new AtomicLong(0);
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     public boolean init(final FSMCallerOptions opts) {
         this.logManager = opts.getLogManager();
@@ -180,6 +194,7 @@ public class FSMCallerImpl implements FSMCaller {
         this.afterShutdown = opts.getAfterShutdown();
         this.node = opts.getNode();
         this.nodeMetrics = this.node.getNodeMetrics();
+        this.lastCommittedIndex.set(opts.getBootstrapId().getIndex());
         this.lastAppliedIndex.set(opts.getBootstrapId().getIndex());
         notifyLastAppliedIndexUpdated(this.lastAppliedIndex.get());
         this.lastAppliedTerm = opts.getBootstrapId().getTerm();
@@ -212,13 +227,13 @@ public class FSMCallerImpl implements FSMCaller {
         if (this.taskQueue != null) {
             final CountDownLatch latch = new CountDownLatch(1);
             this.shutdownLatch = latch;
-            Utils.runInThread(() -> this.taskQueue.publishEvent((task, sequence) -> {
+
+            ThreadPoolsFactory.runInThread(getNode().getGroupId(), () -> this.taskQueue.publishEvent((task, sequence) -> {
                 task.reset();
                 task.type = TaskType.SHUTDOWN;
                 task.shutdownLatch = latch;
             }));
         }
-        doShutdown();
     }
 
     @Override
@@ -232,12 +247,16 @@ public class FSMCallerImpl implements FSMCaller {
             LOG.warn("FSMCaller is stopped, can not apply new task.");
             return false;
         }
-        if (!this.taskQueue.tryPublishEvent(tpl)) {
-            setError(new RaftException(ErrorType.ERROR_TYPE_STATE_MACHINE, new Status(RaftError.EBUSY,
-                "FSMCaller is overload.")));
+        this.taskQueue.publishEvent(tpl);
+        return true;
+    }
+
+    @Override
+    public boolean hasAvailableCapacity(int requiredCapacity) {
+        if (this.shutdownLatch != null) {
             return false;
         }
-        return true;
+        return this.taskQueue.hasAvailableCapacity(requiredCapacity);
     }
 
     @Override
@@ -315,7 +334,7 @@ public class FSMCallerImpl implements FSMCaller {
      *
      * 2018-Apr-04 2:20:31 PM
      */
-    public class OnErrorClosure implements Closure {
+    public static class OnErrorClosure implements InternalClosure {
         private RaftException error;
 
         public OnErrorClosure(final RaftException error) {
@@ -339,7 +358,7 @@ public class FSMCallerImpl implements FSMCaller {
     @Override
     public boolean onError(final RaftException error) {
         if (!this.error.getStatus().isOk()) {
-            LOG.warn("FSMCaller already in error status, ignore new error: {}", error);
+            LOG.warn("FSMCaller already in error status, ignore new error.", error);
             return false;
         }
         final OnErrorClosure c = new OnErrorClosure(error);
@@ -350,8 +369,17 @@ public class FSMCallerImpl implements FSMCaller {
     }
 
     @Override
+    public long getLastCommittedIndex() {
+        return lastCommittedIndex.get();
+    }
+
+    @Override
     public long getLastAppliedIndex() {
         return this.lastAppliedIndex.get();
+    }
+
+    public NodeImpl getNode() {
+        return this.node;
     }
 
     @Override
@@ -374,6 +402,7 @@ public class FSMCallerImpl implements FSMCaller {
             if (task.committedIndex > maxCommittedIndex) {
                 maxCommittedIndex = task.committedIndex;
             }
+            task.reset();
         } else {
             if (maxCommittedIndex >= 0) {
                 this.currTask = TaskType.COMMITTED;
@@ -387,10 +416,7 @@ public class FSMCallerImpl implements FSMCaller {
                         Requires.requireTrue(false, "Impossible");
                         break;
                     case SNAPSHOT_SAVE:
-                        this.currTask = TaskType.SNAPSHOT_SAVE;
-                        if (passByStatus(task.done)) {
-                            doSnapshotSave((SaveSnapshotClosure) task.done);
-                        }
+                        onSnapshotSaveSync(task);
                         break;
                     case SNAPSHOT_LOAD:
                         this.currTask = TaskType.SNAPSHOT_LOAD;
@@ -424,6 +450,7 @@ public class FSMCallerImpl implements FSMCaller {
                     case SHUTDOWN:
                         this.currTask = TaskType.SHUTDOWN;
                         shutdown = task.shutdownLatch;
+                        doShutdown();
                         break;
                     case FLUSH:
                         this.currTask = TaskType.FLUSH;
@@ -432,6 +459,7 @@ public class FSMCallerImpl implements FSMCaller {
                 }
             } finally {
                 this.nodeMetrics.recordLatency(task.type.metricName(), Utils.monotonicMs() - startMs);
+                task.reset();
             }
         }
         try {
@@ -446,6 +474,31 @@ public class FSMCallerImpl implements FSMCaller {
             if (shutdown != null) {
                 shutdown.countDown();
             }
+        }
+    }
+
+    @OnlyForTest
+    Thread getFsmThread() {
+        return this.fsmThread;
+    }
+
+    @Override
+    public boolean isRunningOnFSMThread() {
+        return Thread.currentThread() == fsmThread;
+    }
+
+    @Override
+    public void onSnapshotSaveSync(SaveSnapshotClosure done) {
+        ApplyTask task = new ApplyTask();
+        task.type = TaskType.SNAPSHOT_SAVE;
+        task.done = done;
+        this.onSnapshotSaveSync(task);
+    }
+
+    private void onSnapshotSaveSync(final ApplyTask task) {
+        this.currTask = TaskType.SNAPSHOT_SAVE;
+        if (passByStatus(task.done)) {
+            doSnapshotSave((SaveSnapshotClosure) task.done);
         }
     }
 
@@ -473,6 +526,7 @@ public class FSMCallerImpl implements FSMCaller {
         if (lastAppliedIndex >= committedIndex) {
             return;
         }
+        this.lastCommittedIndex.set(committedIndex);
         final long startMs = Utils.monotonicMs();
         try {
             final List<Closure> closures = new ArrayList<>();
@@ -483,7 +537,7 @@ public class FSMCallerImpl implements FSMCaller {
             onTaskCommitted(taskClosures);
 
             Requires.requireTrue(firstClosureIndex >= 0, "Invalid firstClosureIndex");
-            final IteratorImpl iterImpl = new IteratorImpl(this.fsm, this.logManager, closures, firstClosureIndex,
+            final IteratorImpl iterImpl = new IteratorImpl(this, this.logManager, closures, firstClosureIndex,
                 lastAppliedIndex, committedIndex, this.applyingIndex);
             while (iterImpl.isGood()) {
                 final LogEntry logEntry = iterImpl.entry();
@@ -505,23 +559,40 @@ public class FSMCallerImpl implements FSMCaller {
                 }
 
                 // Apply data task to user state machine
-                doApplyTasks(iterImpl);
+                try {
+                    doApplyTasks(iterImpl);
+                } catch (final Throwable t) {
+                    // If the user state machine throws, we must not let the
+                    // exception propagate — that would skip setLastApplied()
+                    // and stall the apply pipeline permanently (the same
+                    // entries would be retried on every doCommitted() call,
+                    // hitting the same exception in an infinite loop).
+                    LOG.error("StateMachine threw when applying entries starting at index={}. "
+                              + "Halting state machine to avoid stall.", iterImpl.getIndex(), t);
+                    iterImpl.setError(new Status(RaftError.ESTATEMACHINE, "StateMachine threw: %s", t.getMessage()));
+                    break;
+                }
             }
 
             if (iterImpl.hasError()) {
                 setError(iterImpl.getError());
                 iterImpl.runTheRestClosureWithError();
             }
-            final long lastIndex = iterImpl.getIndex() - 1;
+            long lastIndex = iterImpl.getIndex() - 1;
             final long lastTerm = this.logManager.getTerm(lastIndex);
-            final LogId lastAppliedId = new LogId(lastIndex, lastTerm);
-            this.lastAppliedIndex.set(lastIndex);
-            this.lastAppliedTerm = lastTerm;
-            this.logManager.setAppliedId(lastAppliedId);
-            notifyLastAppliedIndexUpdated(lastIndex);
+
+            setLastApplied(lastIndex, lastTerm);
         } finally {
             this.nodeMetrics.recordLatency("fsm-commit", Utils.monotonicMs() - startMs);
         }
+    }
+
+    void setLastApplied(long lastIndex, final long lastTerm) {
+        final LogId lastAppliedId = new LogId(lastIndex, lastTerm);
+        this.lastAppliedIndex.set(lastIndex);
+        this.lastAppliedTerm = lastTerm;
+        this.logManager.setAppliedId(lastAppliedId);
+        notifyLastAppliedIndexUpdated(lastIndex);
     }
 
     private void onTaskCommitted(final List<TaskClosure> closures) {
@@ -557,8 +628,8 @@ public class FSMCallerImpl implements FSMCaller {
         final ConfigurationEntry confEntry = this.logManager.getConfiguration(lastAppliedIndex);
         if (confEntry == null || confEntry.isEmpty()) {
             LOG.error("Empty conf entry for lastAppliedIndex={}", lastAppliedIndex);
-            Utils.runClosureInThread(done, new Status(RaftError.EINVAL, "Empty conf entry for lastAppliedIndex=%s",
-                lastAppliedIndex));
+            ThreadPoolsFactory.runClosureInThread(getNode().getGroupId(), done, new Status(RaftError.EINVAL,
+                "Empty conf entry for lastAppliedIndex=%s", lastAppliedIndex));
             return;
         }
         for (final PeerId peer : confEntry.getConf()) {
@@ -666,6 +737,7 @@ public class FSMCallerImpl implements FSMCaller {
             }
             this.fsm.onConfigurationCommitted(conf);
         }
+        this.lastCommittedIndex.set(meta.getLastIncludedIndex());
         this.lastAppliedIndex.set(meta.getLastIncludedIndex());
         this.lastAppliedTerm = meta.getLastIncludedTerm();
         done.run(Status.OK());

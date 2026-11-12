@@ -45,7 +45,6 @@ import com.alipay.sofa.jraft.util.NamedThreadFactory;
 import com.alipay.sofa.jraft.util.RpcFactoryHelper;
 import com.alipay.sofa.jraft.util.ThreadPoolMetricSet;
 import com.alipay.sofa.jraft.util.ThreadPoolUtil;
-import com.alipay.sofa.jraft.util.Utils;
 import com.google.protobuf.Descriptors;
 import com.google.protobuf.Message;
 
@@ -107,7 +106,7 @@ public abstract class AbstractClientService implements ClientService {
         final RaftRpcFactory factory = RpcFactoryHelper.rpcFactory();
         this.rpcClient = factory.createRpcClient(factory.defaultJRaftClientConfigHelper(this.rpcOptions));
         configRpcClient(this.rpcClient);
-        this.rpcClient.init(null);
+        this.rpcClient.init(this.rpcOptions);
         this.rpcExecutor = ThreadPoolUtil.newBuilder() //
             .poolName("JRaft-RPC-Processor") //
             .enableMetric(true) //
@@ -120,7 +119,6 @@ public abstract class AbstractClientService implements ClientService {
         if (this.rpcOptions.getMetricRegistry() != null) {
             this.rpcOptions.getMetricRegistry().register("raft-rpc-client-thread-pool",
                 new ThreadPoolMetricSet(this.rpcExecutor));
-            Utils.registerClosureExecutorMetrics(this.rpcOptions.getMetricRegistry());
         }
         return true;
     }

@@ -5,15 +5,15 @@
     <parent>
         <artifactId>jraft-parent</artifactId>
         <groupId>com.alipay.sofa</groupId>
-        <version>1.3.5</version>
+        <version>1.4.1</version>
     </parent>
     <artifactId>jraft-example</artifactId>
     <packaging>jar</packaging>
     <name>jraft-example ${project.version}</name>
 
     <properties>
-        <jackson.databind.version>2.10.5.1</jackson.databind.version>
-        <jackson.dataformat.version>2.10.4</jackson.dataformat.version>
+        <jackson.databind.version>2.12.6.1</jackson.databind.version>
+        <jackson.dataformat.version>2.13.4</jackson.dataformat.version>
     </properties>
 
     <dependencies>
@@ -78,6 +78,7 @@
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
+                <version>1.6.0</version>
                 <configuration>
                     <executable>java</executable>
                     <mainClass>com.alipay.sofa.jraft.benchmark.BenchmarkBootstrap</mainClass>

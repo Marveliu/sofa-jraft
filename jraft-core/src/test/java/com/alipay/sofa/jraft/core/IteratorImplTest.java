@@ -29,7 +29,6 @@ import org.mockito.Mockito;
 import org.mockito.runners.MockitoJUnitRunner;
 
 import com.alipay.sofa.jraft.Closure;
-import com.alipay.sofa.jraft.StateMachine;
 import com.alipay.sofa.jraft.Status;
 import com.alipay.sofa.jraft.entity.EnumOutter;
 import com.alipay.sofa.jraft.entity.LogEntry;
@@ -45,16 +44,21 @@ import static org.junit.Assert.assertTrue;
 @RunWith(value = MockitoJUnitRunner.class)
 public class IteratorImplTest {
 
-    private IteratorImpl  iter;
+    private static final String GROUP_ID = "group001";
+    private IteratorImpl        iter;
     @Mock
-    private StateMachine  fsm;
+    private NodeImpl            node;
     @Mock
-    private LogManager    logManager;
-    private List<Closure> closures;
-    private AtomicLong    applyingIndex;
+    private FSMCallerImpl       fsmCaller;
+    @Mock
+    private LogManager          logManager;
+    private List<Closure>       closures;
+    private AtomicLong          applyingIndex;
 
     @Before
     public void setup() {
+        Mockito.when(this.node.getGroupId()).thenReturn(GROUP_ID);
+        Mockito.when(this.fsmCaller.getNode()).thenReturn(node);
         this.applyingIndex = new AtomicLong(0);
         this.closures = new ArrayList<>();
         for (int i = 0; i < 11; i++) {
@@ -64,7 +68,7 @@ public class IteratorImplTest {
             log.getId().setTerm(1);
             Mockito.when(this.logManager.getEntry(i)).thenReturn(log);
         }
-        this.iter = new IteratorImpl(fsm, logManager, closures, 0L, 0L, 10L, applyingIndex);
+        this.iter = new IteratorImpl(fsmCaller, logManager, closures, 0L, 0L, 10L, applyingIndex);
     }
 
     @Test

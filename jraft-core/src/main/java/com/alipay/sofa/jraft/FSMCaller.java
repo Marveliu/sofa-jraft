@@ -48,6 +48,12 @@ public interface FSMCaller extends Lifecycle<FSMCallerOptions>, Describer {
     }
 
     /**
+     * Returns true when current thread is the thread that calls state machine callback methods.
+     * @return
+     */
+    boolean isRunningOnFSMThread();
+
+    /**
      * Adds a LastAppliedLogIndexListener.
      */
     void addLastAppliedLogIndexListener(final LastAppliedLogIndexListener listener);
@@ -60,14 +66,28 @@ public interface FSMCaller extends Lifecycle<FSMCallerOptions>, Describer {
     boolean onCommitted(final long committedIndex);
 
     /**
-     * Called after loading snapshot.
+     * Given specified <tt>requiredCapacity</tt> determines if that amount of space
+     * is available to submit new tasks to fsm. Returns true when available.
+     * @param requiredCapacity
+     * @return Returns true when available.
+     */
+    public boolean hasAvailableCapacity(final int requiredCapacity);
+
+    /**
+     * Called when loading snapshot.
      *
      * @param done callback
      */
     boolean onSnapshotLoad(final LoadSnapshotClosure done);
 
     /**
-     * Called after saving snapshot.
+     * Called when saving snapshot synchronously, it MUST be called in state machine methods.
+     * @param done
+     */
+    public void onSnapshotSaveSync(SaveSnapshotClosure done);
+
+    /**
+     * Called when saving snapshot.
      *
      * @param done callback
      */
@@ -112,6 +132,11 @@ public interface FSMCaller extends Lifecycle<FSMCallerOptions>, Describer {
      * Returns the last log entry index to apply state machine.
      */
     long getLastAppliedIndex();
+
+    /**
+     * Returns the last log entry that was committed to raft group.
+     */
+    long getLastCommittedIndex();
 
     /**
      * Called after shutdown to wait it terminates.

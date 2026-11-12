@@ -18,7 +18,9 @@ package com.alipay.sofa.jraft.rhea.serialization.impl.protostuff.io;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 
+import com.alipay.sofa.jraft.util.BufferUtils;
 import io.protostuff.ByteString;
 import io.protostuff.IntSerializer;
 import io.protostuff.Output;
@@ -27,7 +29,6 @@ import io.protostuff.Schema;
 import com.alipay.sofa.jraft.rhea.serialization.io.OutputBuf;
 import com.alipay.sofa.jraft.rhea.util.VarInts;
 import com.alipay.sofa.jraft.util.internal.ReferenceFieldUpdater;
-import com.alipay.sofa.jraft.util.internal.UnsafeUtf8Util;
 import com.alipay.sofa.jraft.util.internal.Updaters;
 import static io.protostuff.ProtobufOutput.encodeZigZag32;
 import static io.protostuff.ProtobufOutput.encodeZigZag64;
@@ -49,6 +50,13 @@ class NioBufOutput implements Output {
                                                                                              .newReferenceFieldUpdater(
                                                                                                  ByteString.class,
                                                                                                  "bytes");
+
+    /**
+     * Maximum number of bytes per Java UTF-16 char in UTF-8.
+     *
+     * @see java.nio.charset.CharsetEncoder#maxBytesPerChar()
+     */
+    static final int                                               MAX_BYTES_PER_CHAR    = 3;
 
     protected final OutputBuf                                      outputBuf;
     protected final int                                            maxCapacity;
@@ -157,7 +165,7 @@ class NioBufOutput implements Output {
         // UTF-8 byte length of the string is at least its UTF-16 code unit length (value.length()),
         // and at most 3 times of it. We take advantage of this in both branches below.
         int minLength = value.length();
-        int maxLength = minLength * UnsafeUtf8Util.MAX_BYTES_PER_CHAR;
+        int maxLength = minLength * MAX_BYTES_PER_CHAR;
         int minLengthVarIntSize = VarInts.computeRawVarInt32Size(minLength);
         int maxLengthVarIntSize = VarInts.computeRawVarInt32Size(maxLength);
         if (minLengthVarIntSize == maxLengthVarIntSize) {
@@ -168,38 +176,28 @@ class NioBufOutput implements Output {
             // Save the current position and increment past the length field. We'll come back
             // and write the length field after the encoding is complete.
             int stringStartPos = position + maxLengthVarIntSize;
-            nioBuffer.position(stringStartPos);
+            BufferUtils.position(nioBuffer, stringStartPos);
 
             int length;
-            // Encode the string.
-            if (nioBuffer.isDirect()) {
-                UnsafeUtf8Util.encodeUtf8Direct(value, nioBuffer);
-                // Write the length and advance the position.
-                length = nioBuffer.position() - stringStartPos;
-            } else {
-                int offset = nioBuffer.arrayOffset() + stringStartPos;
-                int outIndex = UnsafeUtf8Util.encodeUtf8(value, nioBuffer.array(), offset, nioBuffer.remaining());
-                length = outIndex - offset;
-            }
-            nioBuffer.position(position);
+            // Encode the string using standard UTF-8 encoding.
+            byte[] utf8Bytes = value.toString().getBytes(StandardCharsets.UTF_8);
+            length = utf8Bytes.length;
+
+            // Write the UTF-8 bytes to the buffer
+            nioBuffer.put(utf8Bytes);
+            BufferUtils.position(nioBuffer, position);
             writeVarInt32(length);
-            nioBuffer.position(stringStartPos + length);
+            BufferUtils.position(nioBuffer, stringStartPos + length);
         } else {
-            // Calculate and write the encoded length.
-            int length = UnsafeUtf8Util.encodedLength(value);
+            // Calculate and write the encoded length using standard UTF-8 encoding.
+            byte[] utf8Bytes = value.toString().getBytes(StandardCharsets.UTF_8);
+            int length = utf8Bytes.length;
             writeVarInt32(length);
 
             ensureCapacity(length);
 
-            if (nioBuffer.isDirect()) {
-                // Write the string and advance the position.
-                UnsafeUtf8Util.encodeUtf8Direct(value, nioBuffer);
-            } else {
-                int pos = nioBuffer.position();
-                UnsafeUtf8Util.encodeUtf8(value, nioBuffer.array(), nioBuffer.arrayOffset() + pos,
-                    nioBuffer.remaining());
-                nioBuffer.position(pos + length);
-            }
+            // Write the UTF-8 bytes to the buffer
+            nioBuffer.put(utf8Bytes);
         }
     }
 

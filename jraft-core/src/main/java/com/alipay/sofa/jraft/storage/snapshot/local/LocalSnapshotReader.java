@@ -53,11 +53,21 @@ public class LocalSnapshotReader extends SnapshotReader {
     private final String                 path;
     private final LocalSnapshotStorage   snapshotStorage;
     private final SnapshotThrottle       snapshotThrottle;
+    private volatile boolean             closed;
 
     @Override
     public void close() throws IOException {
+        checkState();
         snapshotStorage.unref(this.getSnapshotIndex());
+
         this.destroyReaderInFileService();
+        this.closed = true;
+    }
+
+    private void checkState() {
+        if (this.closed) {
+            throw new IllegalStateException("Reader was closed");
+        }
     }
 
     public LocalSnapshotReader(LocalSnapshotStorage snapshotStorage, SnapshotThrottle snapshotThrottle, Endpoint addr,
@@ -68,6 +78,7 @@ public class LocalSnapshotReader extends SnapshotReader {
         this.addr = addr;
         this.path = path;
         this.readerId = 0;
+        this.closed = false;
         this.metaTable = new LocalSnapshotMetaTable(raftOptions);
     }
 
@@ -80,7 +91,7 @@ public class LocalSnapshotReader extends SnapshotReader {
     public boolean init(final Void v) {
         final File dir = new File(this.path);
         if (!dir.exists()) {
-            LOG.error("No such path %s for snapshot reader.", this.path);
+            LOG.error("No such path {} for snapshot reader.", this.path);
             setError(RaftError.ENOENT, "No such path %s for snapshot reader", this.path);
             return false;
         }
@@ -88,7 +99,7 @@ public class LocalSnapshotReader extends SnapshotReader {
         try {
             return this.metaTable.loadFromFile(metaPath);
         } catch (final IOException e) {
-            LOG.error("Fail to load snapshot meta {}.", metaPath);
+            LOG.error("Fail to load snapshot meta {}.", metaPath, e);
             setError(RaftError.EIO, "Fail to load snapshot meta from path %s", metaPath);
             return false;
         }
@@ -118,6 +129,7 @@ public class LocalSnapshotReader extends SnapshotReader {
 
     @Override
     public String generateURIForCopy() {
+        checkState();
         if (this.addr == null || this.addr.equals(new Endpoint(Utils.IP_ANY, 0))) {
             LOG.error("Address is not specified");
             return null;
@@ -136,7 +148,7 @@ public class LocalSnapshotReader extends SnapshotReader {
             }
         }
 
-        return String.format(REMOTE_SNAPSHOT_URI_SCHEME + "%s/%d", this.addr.toString(), this.readerId);
+        return String.format(REMOTE_SNAPSHOT_URI_SCHEME + "%s/%d", this.addr, this.readerId);
     }
 
     private void destroyReaderInFileService() {

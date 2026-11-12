@@ -17,17 +17,11 @@
 package com.alipay.sofa.jraft.util;
 
 import java.nio.ByteBuffer;
-import java.util.concurrent.CountDownLatch;
 
 import org.junit.Assert;
 import org.junit.Test;
 
-import com.alipay.sofa.jraft.Closure;
-import com.alipay.sofa.jraft.Status;
-import com.alipay.sofa.jraft.error.RaftError;
-
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 
@@ -38,19 +32,6 @@ import static org.junit.Assert.assertTrue;
  * 2018-Apr-10 5:51:20 PM
  */
 public class UtilsTest {
-
-    @Test
-    public void testRunThread() throws Exception {
-        CountDownLatch latch = new CountDownLatch(1);
-        Utils.runInThread(new Runnable() {
-
-            @Override
-            public void run() {
-                latch.countDown();
-            }
-        });
-        latch.await();
-    }
 
     @Test(expected = IllegalArgumentException.class)
     public void tetsVerifyGroupId1() {
@@ -81,36 +62,6 @@ public class UtilsTest {
         Utils.verifyGroupId("test-hello");
         Utils.verifyGroupId("test123");
         Utils.verifyGroupId("t_hello");
-    }
-
-    @Test
-    public void testRunClosure() throws Exception {
-        CountDownLatch latch = new CountDownLatch(1);
-        Utils.runClosureInThread(new Closure() {
-
-            @Override
-            public void run(Status status) {
-                assertTrue(status.isOk());
-                latch.countDown();
-            }
-        });
-        latch.await();
-    }
-
-    @Test
-    public void testRunClosureWithStatus() throws Exception {
-        CountDownLatch latch = new CountDownLatch(1);
-        Utils.runClosureInThread(new Closure() {
-
-            @Override
-            public void run(Status status) {
-                assertFalse(status.isOk());
-                Assert.assertEquals(RaftError.EACCES.getNumber(), status.getCode());
-                assertEquals("test 99", status.getErrorMsg());
-                latch.countDown();
-            }
-        }, new Status(RaftError.EACCES, "test %d", 99));
-        latch.await();
     }
 
     @Test

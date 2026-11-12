@@ -29,6 +29,12 @@ import java.nio.ByteBuffer;
 public interface Iterator extends java.util.Iterator<ByteBuffer> {
 
     /**
+     * When calling #{Iterator#next}, whether to commit the state machine. Don't by default.
+     * @param status enables auto-commit mode or not, true means enable.
+     */
+    void setAutoCommitPerLog(boolean status);
+
+    /**
      * Return the data whose content is the same as what was passed to
      * Node#apply(Task) in the leader node.
      */
@@ -61,6 +67,22 @@ public interface Iterator extends java.util.Iterator<ByteBuffer> {
      * StateMachine with the given task. Otherwise done() must be NULL.
      * */
     Closure done();
+
+    /**
+     * Commit state machine. After this invocation, we will consider that
+     * the state machine promises the last task is already applied successfully and can't be rolled back.
+     * @since 1.3.11
+     */
+    boolean commit();
+
+    /**
+     * Commit state machine, then try to save a snapshot with current log applied if commit successfully.
+     * @see Node#snapshotSync(Closure)
+     * @see #commit()
+     * @param done Invoked when the snapshot finishes, describing the detailed result.
+     * @since 1.3.11
+     */
+    void commitAndSnapshotSync(Closure done);
 
     /**
      * Invoked when some critical error occurred. And we will consider the last

@@ -24,7 +24,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -297,7 +297,7 @@ public class Configuration implements Iterable<PeerId>, Copiable<Configuration> 
                 peerStr = peerStr.substring(0, index);
                 isLearner = true;
             }
-            if (peer.parse(peerStr)) {
+            if (peer.parse(StringUtils.trim(peerStr))) {
                 if (isLearner) {
                     addLearner(peer);
                 } else {

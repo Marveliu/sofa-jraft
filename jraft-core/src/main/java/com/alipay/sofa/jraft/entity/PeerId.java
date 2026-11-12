@@ -18,7 +18,7 @@ package com.alipay.sofa.jraft.entity;
 
 import java.io.Serializable;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -55,6 +55,8 @@ public class PeerId implements Copiable<PeerId>, Serializable, Checksum {
     public static final PeerId  ANY_PEER         = new PeerId();
 
     private long                checksum;
+
+    public final static int     ESTIMATED_BYTES  = 120;
 
     public PeerId() {
         super();
@@ -192,7 +194,7 @@ public class PeerId implements Copiable<PeerId>, Serializable, Checksum {
      *
      */
     public boolean parse(final String s) {
-        if (StringUtils.isEmpty(s)) {
+        if (StringUtils.isEmpty(s) || StringUtils.isBlank(s)) {
             return false;
         }
 

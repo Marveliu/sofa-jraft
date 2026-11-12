@@ -40,11 +40,20 @@ public class IteratorWrapper implements Iterator {
 
     @Override
     public ByteBuffer next() {
+        // commit log if auto-commit mode is enabled and no errors occur before accessing the next log
+        if (impl.getAutoCommitPerLog() && !impl.hasError()) {
+            commit();
+        }
         final ByteBuffer data = getData();
         if (hasNext()) {
             this.impl.next();
         }
         return data;
+    }
+
+    @Override
+    public void setAutoCommitPerLog(boolean status) {
+        impl.setAutoCommitPerLog(status);
     }
 
     @Override
@@ -61,6 +70,16 @@ public class IteratorWrapper implements Iterator {
     @Override
     public long getTerm() {
         return this.impl.entry().getId().getTerm();
+    }
+
+    @Override
+    public boolean commit() {
+        return this.impl.commit();
+    }
+
+    @Override
+    public void commitAndSnapshotSync(Closure done) {
+        this.impl.commitAndSnapshotSync(done);
     }
 
     @Override
